@@ -1,0 +1,232 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --border: #dbe1ea;
+  --accent: #1d4ed8;
+  --ok-bg: #ecfdf3;
+  --ok-text: #166534;
+  --bad-bg: #fef2f2;
+  --bad-text: #991b1b;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.hero h1 {
+  margin: 0 0 8px;
+  font-size: 2rem;
+}
+.hero p { color: var(--muted); margin: 0 0 24px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.04);
+  margin-bottom: 18px;
+}
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+button {
+  border: 0;
+  background: var(--accent);
+  color: white;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #e5eefb;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+.muted { color: var(--muted); }
+.summary {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.summary-item {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.summary-item strong {
+  display: block;
+  font-size: 1.1rem;
+  margin-top: 4px;
+}
+.search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  margin-top: 8px;
+}
+input {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 1rem;
+}
+.hidden { display: none; }
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.athlete-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.05);
+}
+.athlete-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.athlete-header h2 {
+  margin: 0 0 4px;
+  font-size: 1.35rem;
+}
+.clubs { color: var(--muted); }
+.competition-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  margin-top: 12px;
+  background: #fcfdff;
+}
+.competition-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.competition-title h3 { margin: 0; font-size: 1.05rem; }
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.meta-grid .meta-item {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+}
+.attempt-table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.attempt-table th,
+.attempt-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.attempt-table tr:last-child td { border-bottom: 0; }
+.attempt-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+.attempt-good {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+.attempt-bad {
+  background: var(--bad-bg);
+  color: var(--bad-text);
+}
+.links {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.links a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.message-error {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+.message-info {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+@media (max-width: 720px) {
+  .container { padding: 16px; }
+  .search-row { grid-template-columns: 1fr; }
+}
+
+.progress-wrap {
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.progress-bar {
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 250ms ease;
+}

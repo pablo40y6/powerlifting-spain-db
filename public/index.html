@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Buscador Powerlifting Spain</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="hero">
+        <h1>Buscador de competidores de Powerlifting Spain</h1>
+        <p>
+          Indexa automáticamente las competiciones publicadas en Powerlifting Spain y te devuelve el historial de un atleta con sus intentos y nulos.
+        </p>
+      </header>
+
+      <section class="card controls">
+        <div class="toolbar">
+          <button id="reindexBtn">Actualizar índice</button>
+          <span id="statusBadge" class="badge">Cargando estado…</span>
+        </div>
+        <p id="statusText" class="muted"></p>
+        <div id="progressWrap" class="progress-wrap hidden">
+          <div class="progress-head">
+            <strong id="progressLabel">0%</strong>
+            <span id="progressDetails" class="muted"></span>
+          </div>
+          <div class="progress-bar" aria-label="Progreso de indexación">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+        </div>
+        <div id="summaryBox" class="summary"></div>
+      </section>
+
+      <section class="card search-box">
+        <label for="nameInput">Nombre y apellidos</label>
+        <div class="search-row">
+          <input id="nameInput" type="text" placeholder="Ej.: Jose David Figueroa Dippe" />
+          <button id="searchBtn">Buscar</button>
+        </div>
+        <p class="muted">La búsqueda tolera tildes, mayúsculas y coincidencias parciales.</p>
+      </section>
+
+      <section id="messageBox" class="card hidden"></section>
+      <section id="results" class="results"></section>
+    </main>
+
+    <template id="attemptCellTemplate">
+      <span class="attempt-pill"></span>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
