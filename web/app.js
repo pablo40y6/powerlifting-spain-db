@@ -12,11 +12,23 @@ const controls = {
   sex: $('sexFilter'),
   year: $('yearFilter'),
   competition: $('competitionFilter'),
+  eventType: $('eventTypeFilter'),
   sort: $('sortSelect'),
 };
 
 function normalize(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9ñü\s-]/gi, ' ').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function tokens(value) {
+  return normalize(value).split(' ').filter(Boolean);
+}
+
+function allTokensPresent(query, target) {
+  const queryTokens = tokens(query);
+  if (!queryTokens.length) return true;
+  const targetTokens = new Set(tokens(target));
+  return queryTokens.every((token) => targetTokens.has(token));
 }
 
 function formatNumber(value, digits = 1) {
@@ -32,7 +44,22 @@ function formatDate(value) {
 }
 
 function yearFromRow(row) {
-  return row.competitionDate ? row.competitionDate.slice(0, 4) : '';
+  return row.competitionYear ? String(row.competitionYear) : (row.competitionDate ? row.competitionDate.slice(0, 4) : '');
+}
+
+function eventTypeFromRow(row) {
+  return row.eventType || row.liftType || 'powerlifting';
+}
+
+function eventTypeLabel(value) {
+  return {
+    powerlifting: 'Powerlifting completo',
+    bench: 'Press banca',
+    deadlift: 'Peso muerto',
+    squat: 'Sentadilla',
+    other: 'Otra',
+    mixed: 'Mixta',
+  }[value || 'powerlifting'] || value || 'Powerlifting completo';
 }
 
 function flattenIndex(index) {
@@ -72,13 +99,15 @@ function matches(row) {
   const category = controls.category.value;
   const sex = controls.sex.value;
   const year = controls.year.value;
+  const eventType = controls.eventType.value;
 
-  return (!athlete || normalize(row.athleteName).includes(athlete)) &&
+  return (!athlete || allTokensPresent(athlete, row.athleteName)) &&
     (!club || normalize(row.club).includes(club)) &&
     (!competition || normalize(row.competitionName).includes(competition)) &&
     (!category || row.category === category) &&
     (!sex || row.sex === sex) &&
-    (!year || yearFromRow(row) === year);
+    (!year || yearFromRow(row) === year) &&
+    (!eventType || eventTypeFromRow(row) === eventType);
 }
 
 function compareRows(a, b) {
@@ -124,6 +153,7 @@ function renderTable() {
       <td class="numeric">${formatNumber(row.total)}</td>
       <td class="numeric">${formatNumber(row.ipfgl, 2)}</td>
       <td>${row.competitionName || '—'}</td>
+      <td>${eventTypeLabel(eventTypeFromRow(row))}</td>
       <td class="links-cell">${link(row.meetPageUrl, 'Competición')} ${link(row.resultsUrl, 'Resultados')}</td>
     `;
     body.appendChild(tr);
@@ -170,7 +200,7 @@ function showAthlete(normalizedName) {
     ${rows.map((row) => `
       <article class="detail-card">
         <h3>${row.competitionName || 'Competición'}</h3>
-        <p class="muted">${formatDate(row.competitionDate)} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
+        <p class="muted">${formatDate(row.competitionDate)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
         <table class="attempt-table"><tbody>${renderAttempts(row)}</tbody></table>
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
         <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${link(row.resultsUrl, 'Documento de resultados')}</p>
@@ -193,6 +223,7 @@ async function loadIndex() {
 for (const control of Object.values(controls)) control.addEventListener('input', applyFilters);
 $('resetBtn').addEventListener('click', () => {
   for (const control of Object.values(controls)) control.value = '';
+  controls.eventType.value = 'powerlifting';
   controls.sort.value = 'total-desc';
   applyFilters();
 });

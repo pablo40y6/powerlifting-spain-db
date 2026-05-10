@@ -105,8 +105,15 @@ function formatDateISO(date) {
 }
 
 function parseSpanishDate(text) {
-  const value = stripAccents(String(text || '').toLowerCase());
-  const match = value.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  const raw = String(text || '');
+  const isoMatch = raw.match(/\b(20\d{2}|19\d{2})-(\d{2})-(\d{2})\b/);
+  if (isoMatch) {
+    const date = new Date(Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3])));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const value = stripAccents(raw.toLowerCase());
+  const match = value.match(/(\d{1,2})(?:\s+de)?\s+([a-z]+)(?:\s+de)?\s+(\d{4})/);
   if (!match) return null;
   const day = Number(match[1]);
   const month = MONTHS[match[2]];
@@ -114,6 +121,30 @@ function parseSpanishDate(text) {
   if (!month) return null;
   const date = new Date(Date.UTC(year, month - 1, day));
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+
+function extractYear(text) {
+  const match = String(text || '').match(/\b(20\d{2}|19\d{2})\b/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isInteger(year) ? year : null;
+}
+
+function firstParsedSpanishDate(values) {
+  for (const value of values) {
+    const parsed = parseSpanishDate(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function firstExtractedYear(values) {
+  for (const value of values) {
+    const year = extractYear(value);
+    if (year) return year;
+  }
+  return null;
 }
 
 function firstNonEmpty(values) {
@@ -125,9 +156,9 @@ function firstNonEmpty(values) {
 }
 
 function isLikelyResultsDocument(label, href) {
-  const haystack = `${label || ''} ${href || ''}`.toLowerCase();
-  const good = /(clasific|resultad|ranking|excel|score|resul|fem|mas|hombre|mujer)/.test(haystack);
-  const bad = /(cartel|invit|horario|sesion|grupo|juez|inscrip|guia|acta|record|calendario|normativa)/.test(haystack);
+  const haystack = normalizeName(`${label || ''} ${href || ''}`);
+  const good = /(clasific|resultad|ranking|excel|score|resul|fem|mas|hombre|mujer|levantador|powerlifting|press\s+banca|peso\s+muerto|sub\s*junior|subjunior|junior|master|absoluto|aep|20\d{2})/.test(haystack);
+  const bad = /(cartel|invit|horario|sesion|grupo|juez|inscrip|guia|acta|record|calendario|normativa|foto|imagen|logo)/.test(haystack);
   return good && !bad;
 }
 
@@ -162,6 +193,9 @@ module.exports = {
   parseAttempt,
   attemptsFromValues,
   parseSpanishDate,
+  firstParsedSpanishDate,
+  extractYear,
+  firstExtractedYear,
   formatDateISO,
   firstNonEmpty,
   isLikelyResultsDocument,

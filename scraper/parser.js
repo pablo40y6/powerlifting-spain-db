@@ -29,6 +29,8 @@ const {
   attemptsFromValues,
   cleanCompetitionTitle,
   firstNonEmpty,
+  firstParsedSpanishDate,
+  firstExtractedYear,
   formatDateISO,
   normalizeName,
   normalizeSpaces,
@@ -47,18 +49,40 @@ function buildCompetitionMeta(baseMeta = {}, partial = {}) {
   const locationDateText = normalizeSpaces(
     partial.locationDateText || baseMeta.locationDateText || ''
   );
-  const parsedDate =
-    partial.date ||
-    baseMeta.date ||
-    parseSpanishDate(locationDateText) ||
-    parseSpanishDate(baseMeta.pageTitle || '') ||
-    null;
+  const dateCandidates = [
+    partial.date,
+    baseMeta.date,
+    locationDateText,
+    subtitle,
+    name,
+    baseMeta.pageTitle,
+    baseMeta.title,
+    baseMeta.resultsLabel,
+    baseMeta.resultsUrl,
+    baseMeta.meetPageUrl,
+  ];
+  const parsedDate = firstParsedSpanishDate(dateCandidates);
+  const year = parsedDate
+    ? parsedDate.getUTCFullYear()
+    : firstExtractedYear([
+        partial.year,
+        baseMeta.year,
+        locationDateText,
+        subtitle,
+        name,
+        baseMeta.pageTitle,
+        baseMeta.title,
+        baseMeta.resultsLabel,
+        baseMeta.resultsUrl,
+        baseMeta.meetPageUrl,
+      ]);
 
   return {
     name,
     subtitle,
     locationDateText,
     date: formatDateISO(parsedDate),
+    year: year || null,
     meetPageUrl: baseMeta.meetPageUrl || null,
     meetPageTitle: baseMeta.pageTitle || null,
     resultsUrl: baseMeta.resultsUrl || null,
@@ -101,6 +125,7 @@ function makeAthleteEntry({
     ipfgl: ipfgl ?? null,
     attempts,
     liftType: liftType || 'powerlifting',
+    eventType: liftType || 'powerlifting',
     movementRanks: movementRanks || null,
     competition,
   };
@@ -962,9 +987,10 @@ function parseExcelDocument(buffer, baseMeta) {
       if (!isDataRow) continue;
 
       const lifterName = normalizeSpaces(row[currentLayout.lifterIndex]);
-      const yearOfBirth = currentLayout.yearIndex >= 0 ? parseLocaleNumber(row[currentLayout.yearIndex]) : null;
+      const parsedYearOfBirth = currentLayout.yearIndex >= 0 ? parseLocaleNumber(row[currentLayout.yearIndex]) : null;
+      const yearOfBirth = parsedYearOfBirth && Number.isInteger(parsedYearOfBirth) ? parsedYearOfBirth : null;
       const club = currentLayout.clubIndex >= 0 ? normalizeSpaces(row[currentLayout.clubIndex]) : '';
-      if (!lifterName || !yearOfBirth || !club) continue;
+      if (!lifterName || !club) continue;
 
       const reportedTotal = currentLayout.totalIndex >= 0 ? parseLocaleNumber(row[currentLayout.totalIndex]) : null;
       const movementRanks = movementRanksFromExcelRow(row, currentLayout);
@@ -1357,7 +1383,7 @@ function extractPdfMetadata(lines) {
 
 function isPotentialAthleteLine(line) {
   if (!line) return false;
-  if (!/^\d+\+?\s+/i.test(line)) return false;
+  if (!/^(?:\d+\+?|[+-]\d+)\s+/i.test(line)) return false;
   if (/\b(19|20)\d{2}\b/.test(line)) return true;
 
   // Algunos PDFs nuevos de AEP, por ejemplo IV Copa Black Crown 2026,
@@ -1914,12 +1940,14 @@ function mergePreferredEntry(preferred, fallback) {
     total: pickValue(preferred.total, fallback.total),
     ipfgl: pickValue(preferred.ipfgl, fallback.ipfgl),
     liftType: pickValue(preferred.liftType, fallback.liftType),
+    eventType: pickValue(preferred.eventType, fallback.eventType),
     movementRanks: pickValue(preferred.movementRanks, fallback.movementRanks),
     attempts: selectedAttempts,
     competition: {
       ...fallback.competition,
       ...preferred.competition,
       date: pickValue(preferred.competition?.date, fallback.competition?.date),
+      year: pickValue(preferred.competition?.year, fallback.competition?.year),
       meetPageUrl: pickValue(preferred.competition?.meetPageUrl, fallback.competition?.meetPageUrl),
       resultsUrl: bestLink.resultsUrl,
       resultsLabel: bestLink.resultsLabel,

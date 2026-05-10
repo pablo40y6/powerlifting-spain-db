@@ -25,6 +25,7 @@
         <label>Sexo<select id="sexFilter"><option value="">Todos</option><option value="F">F</option><option value="M">M</option></select></label>
         <label>Año<select id="yearFilter"><option value="">Todos</option></select></label>
         <label>Competición<input id="competitionFilter" type="search" placeholder="Competición" /></label>
+        <label>Modalidad<select id="eventTypeFilter"><option value="powerlifting">Powerlifting completo</option><option value="bench">Press banca</option><option value="deadlift">Peso muerto</option><option value="squat">Sentadilla</option><option value="">Todas</option></select></label>
         <label>Ordenar por
           <select id="sortSelect">
             <option value="total-desc">Total ↓</option>
@@ -57,6 +58,7 @@
                 <th>Total</th>
                 <th>IPF GL</th>
                 <th>Competición</th>
+                <th>Modalidad</th>
                 <th>Links</th>
               </tr>
             </thead>
@@ -72,7 +74,7 @@
     </dialog>
 
     <template id="emptyTemplate">
-      <tr><td colspan="9" class="empty">No hay resultados que coincidan con los filtros.</td></tr>
+      <tr><td colspan="10" class="empty">No hay resultados que coincidan con los filtros.</td></tr>
     </template>
 
     <script src="app.js"></script>
