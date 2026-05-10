@@ -213,6 +213,9 @@ function entryToAthleteCard(entry) {
     attempts: entry.attempts,
     liftType: entry.liftType,
     eventType: entry.eventType || entry.liftType || 'powerlifting',
+    isIndividualResult: entry.isIndividualResult !== false,
+    isRankable: entry.isRankable !== false,
+    hasValidPowerliftingTotal: entry.hasValidPowerliftingTotal !== false,
     competitionYear: entry.competition.year,
   };
 }
@@ -405,13 +408,16 @@ function scoreAthlete(query, athlete) {
   const athleteName = athlete.athleteNameNormalized;
   if (athleteName === normalizedQuery) return 100;
 
-  const queryTokens = tokenize(normalizedQuery);
+  const queryTokens = tokenize(normalizedQuery).filter((token) => token.length > 1);
   if (!queryTokens.length) return 0;
-  const nameTokens = new Set(tokenize(athleteName));
-  const allTokensPresent = queryTokens.every((token) => nameTokens.has(token));
+  const nameTokens = tokenize(athleteName);
+  const allTokensPresent = queryTokens.every((token) =>
+    nameTokens.some((nameToken) => nameToken.startsWith(token))
+  );
   if (!allTokensPresent) return 0;
 
-  return queryTokens.length === nameTokens.size ? 95 : 90;
+  const exactMatches = queryTokens.filter((token) => nameTokens.includes(token)).length;
+  return queryTokens.length === nameTokens.length && exactMatches === queryTokens.length ? 95 : 88 + exactMatches;
 }
 
 function searchAthletes(index, query) {

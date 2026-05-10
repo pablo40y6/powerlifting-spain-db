@@ -25,10 +25,12 @@ function tokens(value) {
 }
 
 function allTokensPresent(query, target) {
-  const queryTokens = tokens(query);
+  const queryTokens = tokens(query).filter((token) => token.length > 1);
   if (!queryTokens.length) return true;
-  const targetTokens = new Set(tokens(target));
-  return queryTokens.every((token) => targetTokens.has(token));
+  const targetTokens = tokens(target);
+  return queryTokens.every((token) =>
+    targetTokens.some((targetToken) => targetToken.startsWith(token))
+  );
 }
 
 function formatNumber(value, digits = 1) {
@@ -93,6 +95,8 @@ function hydrateFilters() {
 }
 
 function matches(row) {
+  if (row.isIndividualResult === false || row.isRankable === false) return false;
+
   const athlete = normalize(controls.athlete.value);
   const club = normalize(controls.club.value);
   const competition = normalize(controls.competition.value);
@@ -166,7 +170,9 @@ function applyFilters() {
 }
 
 function bestBy(rows, key) {
-  return rows.reduce((best, row) => (Number(row[key] || 0) > Number(best?.[key] || 0) ? row : best), null);
+  return rows
+    .filter((row) => row.isIndividualResult !== false && row.isRankable !== false)
+    .reduce((best, row) => (Number(row[key] || 0) > Number(best?.[key] || 0) ? row : best), null);
 }
 
 function attemptText(attempt) {
@@ -202,6 +208,7 @@ function showAthlete(normalizedName) {
         <h3>${row.competitionName || 'Competición'}</h3>
         <p class="muted">${formatDate(row.competitionDate, row.competitionYear)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
         <table class="attempt-table"><tbody>${renderAttempts(row)}</tbody></table>
+        ${row.isRankable === false ? '<p class="muted"><strong>No rankeable:</strong> resultado incompleto o no individual.</p>' : ''}
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
         <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${link(row.resultsUrl, 'Documento de resultados')}</p>
       </article>
