@@ -1,12 +1,12 @@
 const express = require('express');
 const path = require('path');
-const { buildIndex, loadIndex, searchAthletes } = require('./lib/crawler');
+const { buildIndex, loadIndex, searchAthletes } = require('./scraper/crawler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'web')));
 
 let currentIndex = loadIndex();
 let buildState = {
@@ -97,7 +97,7 @@ app.get('/api/search', (req, res) => {
 });
 
 app.get('/{*any}', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'web', 'index.html'));
 });
 
 app.listen(PORT, () => {
