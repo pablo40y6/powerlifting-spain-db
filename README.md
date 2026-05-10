@@ -1,78 +1,72 @@
-# Buscador local de competidores de Powerlifting Spain
+# Powerlifting Spain DB
 
-Esta app crea un índice local con las competiciones publicadas en Powerlifting Spain y te deja buscar por nombre y apellidos para ver:
+Web estática para consultar resultados publicados en Powerlifting Spain. El scraper/crawler sigue siendo Node.js, pero solo se ejecuta en local o en GitHub Actions para generar `data/index.json`; la web publicada en GitHub Pages no necesita Express ni un servidor Node.
 
-- qué competiciones ha hecho un atleta;
-- los 9 intentos (sentadilla, banca y peso muerto);
-- si cada intento fue válido o nulo;
-- enlace a la página de la competición y al documento de resultados.
+## Estructura
 
-## Cómo funciona
-
-1. El backend recorre las páginas de campeonatos por año.
-2. Entra en cada página de competición.
-3. Detecta documentos de resultados (`.pdf`, `.xls`, `.xlsx`).
-4. Prioriza Excel cuando existe, porque suele traer mejor estructura.
-5. Si no hay Excel, parsea el PDF.
-6. Guarda un `data/index.json` local en tu PC.
-7. El frontend busca dentro de ese índice.
+```text
+scraper/                 crawler, parser, utilidades y CLI de indexación
+web/                     HTML, CSS y JS estáticos
+data/                    contiene `index.json` generado (ignorado por git)
+dist/                    salida publicable en GitHub Pages (ignorada por git)
+tests/                   regresiones del parser
+.github/workflows/       actualización semanal/manual y deploy a Pages
+```
 
 ## Requisitos
 
-- Node.js 20 o superior.
+- Node.js 20 o superior para desarrollo local.
+- No se usa OpenIPF como fuente externa.
+- No se usa Excel COM.
+- LibreOffice solo queda como fallback opcional del parser y no bloquea la indexación si no existe.
 
-## Arranque rápido
-
-### Opción 1: Windows
-
-1. Instala Node.js.
-2. Abre una terminal dentro de la carpeta del proyecto.
-3. Ejecuta:
+## Comandos principales
 
 ```bash
-npm install
+npm ci
+npm run build:index
+npm run build:web
+npm test
+```
+
+- `npm run build:index` recorre PowerliftingSpain, descarga PDFs/Excels a una carpeta temporal del sistema, parsea los documentos y escribe `data/index.json`.
+- `npm run build:web` copia `web/index.html`, `web/app.js`, `web/styles.css` y `data/index.json` a `dist/`.
+- `npm test` ejecuta pruebas de regresión sobre casos problemáticos del parser.
+
+## Desarrollo local
+
+Para probar la web estática con los mismos archivos que se publicarán:
+
+```bash
+npm run build:index
+npm run build:web
+npx serve dist
+```
+
+También se mantiene el arranque local Express para compatibilidad:
+
+```bash
 npm start
 ```
 
-4. Abre en el navegador:
+`npm start` sirve la carpeta `web/` y conserva los endpoints locales de API para quien los siga usando, pero producción en GitHub Pages lee directamente `data/index.json`.
 
-```text
-http://localhost:3000
-```
+## GitHub Pages
 
-### Opción 2: macOS / Linux
+El workflow `.github/workflows/update-and-deploy.yml` se puede lanzar manualmente (`workflow_dispatch`) y también corre semanalmente. Sus pasos son:
 
-```bash
-npm install
-npm start
-```
+1. instalar Node;
+2. ejecutar `npm ci`;
+3. ejecutar `npm test`;
+4. ejecutar `npm run build:index`;
+5. ejecutar `npm run build:web`;
+6. publicar `dist/` con GitHub Pages.
 
-Y abre `http://localhost:3000`.
+## Datos y cachés
 
-## Primer uso
+No se versionan documentos descargados ni salidas generadas:
 
-1. Pulsa **Actualizar índice**.
-2. Espera a que termine la indexación.
-3. Busca un nombre y apellidos.
-
-## Qué guarda en local
-
-- `data/index.json`: el índice final.
-- `cache/docs/`: copia local de los PDFs y Excel descargados.
-
-## Limitaciones reales
-
-La app está pensada para ser muy robusta, pero hay tres límites que dependen de cómo publique la web cada competición:
-
-1. Si una competición no tiene documento de resultados enlazado, no hay nada que indexar.
-2. Si un PDF viene muy mal maquetado o escaneado como imagen, el parser puede perder precisión.
-3. Si hay dos atletas con el mismo nombre, tendrás que distinguirlos por club, fecha o categoría.
-
-## Mejora futura recomendable
-
-Si más adelante quieres subirla de nivel, el siguiente paso sería añadir:
-
-- OCR para PDFs escaneados;
-- base de datos SQLite;
-- botón para exportar el historial a Word o Excel;
-- filtros por club, año, categoría y sexo.
+- `data/index.json` se genera en cada build;
+- `dist/` se genera para Pages;
+- `cache/` queda ignorado por compatibilidad histórica;
+- las descargas del scraper van por defecto a `os.tmpdir()` o a `PLS_DOCS_DIR` si se define.
