@@ -288,3 +288,97 @@ test('crawler/discovery: página de competición extrae documentos bajo Resultad
 
   assert.deepEqual(docs.map((doc) => doc.url).sort(), [menUrl, womenUrl].sort());
 });
+
+test('categoría GOODLIFT se infiere por peso corporal cuando el encabezado arrastrado no es fiable', () => {
+  assert.equal(_private.inferPowerliftingCategoryFromBodyweight(91.70, 'M'), '-93kg');
+
+  const entry = _private.parseGoodliftDetailedScoresheetLine(
+    '9 86.92 660.0 3 260.0 245.0 235.0 4 147.5 142.5 135.0 2 252.5 245.0 230.0 14 0.1317 91.70 ZAB 2008 Aranda Sanchez Saul 2',
+    competition('AEP 1 Sub Junior 2026'),
+    'M',
+    '-105kg'
+  );
+
+  assert.ok(entry);
+  assert.equal(entry.category, '-93kg');
+  assert.notEqual(entry.category, '-105kg');
+});
+
+test('búsqueda permite prefijos normalizados de tokens en cualquier orden', () => {
+  const index = {
+    athletes: [
+      { athleteName: 'Aranda Sanchez Saul', athleteNameNormalized: 'aranda sanchez saul', entries: [] },
+      { athleteName: 'Garin Martin Cristian', athleteNameNormalized: 'garin martin cristian', entries: [] },
+      { athleteName: 'Borque Espinosa Antonio', athleteNameNormalized: 'borque espinosa antonio', entries: [] },
+    ],
+  };
+
+  assert.equal(searchAthletes(index, 'saul arand')[0].athleteName, 'Aranda Sanchez Saul');
+  assert.equal(searchAthletes(index, 'aran sau')[0].athleteName, 'Aranda Sanchez Saul');
+  assert.equal(searchAthletes(index, 'crist gar')[0].athleteName, 'Garin Martin Cristian');
+  assert.equal(searchAthletes(index, 'ant borq')[0].athleteName, 'Borque Espinosa Antonio');
+});
+
+test('GOODLIFT: se detiene antes de secciones de equipos y no indexa clubes como atletas', () => {
+  const entries = _private.parseGoodliftDetailedScoresheetLines([
+    'DETAILED SCORESHEET',
+    '9 86.92 660.0 3 260.0 245.0 235.0 4 147.5 142.5 135.0 2 252.5 245.0 230.0 14 0.1317 91.70 ZAB 2008 Aranda Sanchez Saul 2',
+    'Team (points)',
+    '1 SPARTA Murcia [12+12+9+9] 42',
+    '2 POWERLIFTING ALBACETE [9+9+8] 26',
+    'Best Lifters',
+    '1 SOY POWERLIFTER Madrid 125.00',
+    'Abbreviations',
+    'ZAB Zabalategi'
+  ], competition('AEP 1 Sub Junior 2026'), 'M');
+
+  assert.deepEqual(entries.map((entry) => entry.athleteName), ['Aranda Sanchez Saul']);
+  assert.equal(
+    _private.parseGoodliftDetailedScoresheetLine(
+      '1 125.0 42.0 1 0 0 0 1 0 0 0 1 0 0 0 1 0.1234 90.00 SPARTA 2026 POWERLIFTING ALBACETE 1',
+      competition('Resumen equipos'),
+      'M',
+      null
+    ),
+    null
+  );
+});
+
+test('powerlifting sin sentadilla válida no es rankeable por Total/IPF GL', () => {
+  const entry = _private.makeAthleteEntry({
+    competition: competition('Competición con resultado incompleto'),
+    sex: 'F',
+    category: '-63kg',
+    placing: '1',
+    lifterName: 'Carrillo de Freitas Angely',
+    yearOfBirth: 2000,
+    club: 'CLUB TEST',
+    bodyweight: 62.1,
+    coefficient: null,
+    order: 1,
+    attempts: {
+      squat: [
+        { raw: '-112.5', weight: 112.5, good: false },
+        { raw: '-112.5', weight: 112.5, good: false },
+        { raw: '-115', weight: 115, good: false },
+      ],
+      bench: [
+        { raw: '52.5', weight: 52.5, good: true },
+        { raw: null, weight: null, good: null },
+        { raw: null, weight: null, good: null },
+      ],
+      deadlift: [
+        { raw: '57.5', weight: 57.5, good: true },
+        { raw: '-60', weight: 60, good: false },
+        { raw: '112.5', weight: 112.5, good: true },
+      ],
+      __labels: { squat: 'Sentadilla', bench: 'Banca', deadlift: 'Peso muerto' },
+    },
+    total: 122.5,
+    ipfgl: 125,
+    liftType: 'powerlifting',
+  });
+
+  assert.equal(entry.hasValidPowerliftingTotal, false);
+  assert.equal(entry.isRankable, false);
+});
