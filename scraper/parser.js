@@ -1371,7 +1371,7 @@ function isGoodliftPdfText(text) {
 
 function isGoodliftSummarySectionLine(line) {
   const normalized = normalizeName(line);
-  return /\bteam\s+points\b|\bbest\s+lifters\b|\babbreviations\b|\bclub\s+abbreviations\b|\bteam\s+ranking\b/.test(normalized);
+  return /^\s*(team(?:\s+points|\s+ranking)?|best\s+lifters|abbreviations|club\s+abbreviations)\b/.test(normalized);
 }
 
 function textLooksLikeTeamPoints(value) {
@@ -1392,10 +1392,14 @@ function athleteNameLooksLikeClubOrTeam(name) {
 }
 
 function shouldRejectGoodliftTeamOrSummaryLine(line, lifterName = '', club = '') {
-  return isGoodliftSummarySectionLine(line) ||
-    textLooksLikeTeamPoints(line) ||
+  const hasParsedAthlete = Boolean(normalizeSpaces(lifterName));
+  // GOODLIFT PDFs can extract the whole scoresheet as one text line. Reject
+  // section headings only before parsing a candidate athlete; otherwise words
+  // like "Team points", "Best Lifters" or "Abbreviations" elsewhere in
+  // the same PDF line would discard valid individual rows such as Aranda.
+  return (!hasParsedAthlete && isGoodliftSummarySectionLine(line)) ||
     textLooksLikeTeamPoints(club) ||
-    (Boolean(normalizeSpaces(lifterName)) && athleteNameLooksLikeClubOrTeam(lifterName));
+    (hasParsedAthlete && athleteNameLooksLikeClubOrTeam(lifterName));
 }
 
 function inferPowerliftingCategoryFromBodyweight(bodyweight, sex) {
@@ -1509,19 +1513,105 @@ function parseGoodliftDetailedScoresheetLine(line, competition, sex, fallbackCat
   });
 }
 
+
+function isReasonableBirthYearToken(token) {
+  if (!/^\d{4}$/.test(String(token || ''))) return false;
+  const year = Number(token);
+  return year >= 1940 && year <= 2015;
+}
+
+function isGoodliftPlacingToken(token) {
+  return /^\d+$|^(DT|DQ|AI)$/i.test(String(token || ''));
+}
+
+function goodliftNameTokensLookLikePerson(tokens) {
+  if (!Array.isArray(tokens) || tokens.length < 2) return false;
+  const joined = normalizeSpaces(tokens.join(' '));
+  if (!joined || athleteNameLooksLikeClubOrTeam(joined)) return false;
+  return tokens.every((token) => /[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(token));
+}
+
+function parseGoodliftDetailedScoresheetTokens(tokens, competition, sex, fallbackCategory = null) {
+  const entries = [];
+  const usedRanges = [];
+  let currentSex = sex;
+  let currentCategory = fallbackCategory;
+
+  for (let yearIndex = 19; yearIndex < tokens.length - 3; yearIndex += 1) {
+    if (!isReasonableBirthYearToken(tokens[yearIndex])) continue;
+
+    const lineSex = sexFromText(tokens.slice(Math.max(0, yearIndex - 8), yearIndex).join(' '));
+    if (lineSex) currentSex = lineSex;
+
+    const categoryWindow = tokens.slice(Math.max(0, yearIndex - 24), yearIndex).join(' ');
+    const lineCategory = formatCategoryToken(categoryWindow);
+    if (lineCategory) currentCategory = lineCategory;
+
+    const rowStart = yearIndex - 19;
+    if (rowStart < 0) continue;
+
+    const club = tokens[yearIndex - 1];
+    const bodyweight = parseLocaleNumber(tokens[yearIndex - 2]);
+    const coefficient = parseLocaleNumber(tokens[yearIndex - 3]);
+    const order = parseLocaleNumber(tokens[yearIndex - 4]);
+    if (!club || textLooksLikeTeamPoints(club) || club.length > 16) continue;
+    if (!bodyweightMatchesCategory(bodyweight, null) || coefficient === null || coefficient <= 0 || coefficient > 1) continue;
+    if (!isValidPdfOrder(order)) continue;
+
+    const stats = tokens.slice(rowStart, yearIndex - 4);
+    if (stats.length !== 15) continue;
+
+    const ipfgl = parseLocaleNumber(stats[1]);
+    const total = parseLocaleNumber(stats[2]);
+    if (ipfgl === null || total === null || total <= 0 || ipfgl <= 0) continue;
+
+    const parsedAttempts = [stats[4], stats[5], stats[6], stats[8], stats[9], stats[10], stats[12], stats[13], stats[14]]
+      .map(parseGoodliftAttempt);
+    if (parsedAttempts.filter((attempt) => attempt.weight !== null).length < 6) continue;
+
+    let endIndex = -1;
+    for (let index = yearIndex + 3; index < Math.min(tokens.length, yearIndex + 8); index += 1) {
+      if (!isGoodliftPlacingToken(tokens[index])) continue;
+      const nameTokens = tokens.slice(yearIndex + 1, index);
+      if (!goodliftNameTokensLookLikePerson(nameTokens)) continue;
+      endIndex = index;
+      break;
+    }
+    if (endIndex === -1) continue;
+
+    const candidateLine = tokens.slice(rowStart, endIndex + 1).join(' ');
+    if (textLooksLikeTeamPoints(candidateLine)) continue;
+
+    const overlapsExisting = usedRanges.some(([start, end]) => rowStart < end && endIndex + 1 > start);
+    if (overlapsExisting) continue;
+
+    const athlete = parseGoodliftDetailedScoresheetLine(candidateLine, competition, currentSex, currentCategory);
+    if (!athlete) continue;
+
+    entries.push(athlete);
+    usedRanges.push([rowStart, endIndex + 1]);
+  }
+
+  return entries;
+}
+
 function parseGoodliftDetailedScoresheetLines(lines, competition, sex, fallbackCategory = null) {
   const entries = [];
   let currentCategory = fallbackCategory;
   let currentSex = sex;
   let inDetailedScoresheet = false;
+  const detailedLines = [];
 
-  for (const line of lines) {
+  for (const originalLine of lines) {
+    let line = originalLine;
     if (/DETAILED SCORESHEET/i.test(line)) {
       inDetailedScoresheet = true;
-      continue;
+      line = normalizeSpaces(line.replace(/^.*?DETAILED SCORESHEET/i, ''));
+      if (!line) continue;
     }
 
     if (!inDetailedScoresheet) continue;
+    detailedLines.push(line);
     if (isGoodliftSummarySectionLine(line)) continue;
 
     const lineSex = sexFromText(line);
@@ -1536,6 +1626,10 @@ function parseGoodliftDetailedScoresheetLines(lines, competition, sex, fallbackC
     const athlete = parseGoodliftDetailedScoresheetLine(line, competition, currentSex, currentCategory);
     if (athlete) entries.push(athlete);
   }
+
+  const tokens = normalizeSpaces(detailedLines.join(' ')).split(' ').filter(Boolean);
+  const tokenEntries = parseGoodliftDetailedScoresheetTokens(tokens, competition, sex, fallbackCategory);
+  if (tokenEntries.length > entries.length) return tokenEntries;
 
   return entries;
 }
@@ -2007,10 +2101,12 @@ function parsePdfText(rawText, baseMeta) {
   const goodliftText = isGoodliftPdfText(rawText);
   let inGoodliftDetailedScoresheet = !goodliftText;
 
-  for (const line of lines) {
+  for (const originalLine of lines) {
+    let line = originalLine;
     if (goodliftText && /DETAILED SCORESHEET/i.test(line)) {
       inGoodliftDetailedScoresheet = true;
-      continue;
+      line = normalizeSpaces(line.replace(/^.*?DETAILED SCORESHEET/i, ''));
+      if (!line) continue;
     }
     if (!inGoodliftDetailedScoresheet) continue;
     if (goodliftText && isGoodliftSummarySectionLine(line)) continue;
