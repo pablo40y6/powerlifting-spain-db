@@ -1522,7 +1522,7 @@ function parseGoodliftDetailedScoresheetLines(lines, competition, sex, fallbackC
     }
 
     if (!inDetailedScoresheet) continue;
-    if (isGoodliftSummarySectionLine(line)) break;
+    if (isGoodliftSummarySectionLine(line)) continue;
 
     const lineSex = sexFromText(line);
     if (lineSex) currentSex = lineSex;
@@ -1987,15 +1987,12 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
   });
 }
 
-async function parsePdfDocument(buffer, baseMeta) {
-  const parser = new PDFParse({ data: buffer });
-  const parsed = await parser.getText();
-  const lines = String(parsed.text || '')
+function parsePdfText(rawText, baseMeta) {
+  const lines = String(rawText || '')
     .split(/\r?\n/)
     .map((line) => normalizeSpaces(line))
     .filter(Boolean);
 
-  const rawText = String(parsed.text || '');
   const meta = extractPdfMetadata(lines);
   const competition = buildCompetitionMeta(baseMeta, {
     name: meta.name,
@@ -2016,7 +2013,7 @@ async function parsePdfDocument(buffer, baseMeta) {
       continue;
     }
     if (!inGoodliftDetailedScoresheet) continue;
-    if (goodliftText && isGoodliftSummarySectionLine(line)) break;
+    if (goodliftText && isGoodliftSummarySectionLine(line)) continue;
 
     if (/^MUJERES\b/i.test(line)) {
       currentSex = 'F';
@@ -2039,9 +2036,18 @@ async function parsePdfDocument(buffer, baseMeta) {
   }
 
   const repairedEntries = repairEntriesUsingMovementRanks(entries);
-  if (repairedEntries.length || !goodliftText) return repairedEntries;
+  if (!goodliftText) return repairedEntries;
 
-  return parseGoodliftDetailedScoresheetLines(lines, competition, metadataSex, category);
+  const goodliftEntries = parseGoodliftDetailedScoresheetLines(lines, competition, metadataSex, category);
+  if (goodliftEntries.length >= repairedEntries.length) return goodliftEntries;
+
+  return repairedEntries;
+}
+
+async function parsePdfDocument(buffer, baseMeta) {
+  const parser = new PDFParse({ data: buffer });
+  const parsed = await parser.getText();
+  return parsePdfText(String(parsed.text || ''), baseMeta);
 }
 
 async function parseDocument(buffer, extension, baseMeta) {
@@ -2284,6 +2290,7 @@ module.exports = {
     makeAthleteEntry,
     parsePdfAthleteLine,
     parsePdfAthleteLineWithoutYear,
+    parsePdfText,
     parseGoodliftDetailedScoresheetLine,
     parseGoodliftDetailedScoresheetLines,
     isGoodliftPdfText,
