@@ -199,3 +199,36 @@ test('Saúl Aranda, Campeonato de España Sub Junior Humilladero 2026: detecta U
     true
   );
 });
+
+test('crawler/discovery: campeonatos-ano-2026 descubre Sub Junior Humilladero 2026', () => {
+  const seedUrl = 'https://powerliftingspain.es/campeonatos-ano-2026/';
+  const competitionUrl = 'https://powerliftingspain.es/aep-1-campeonato-de-espana-sub-junior-humilladero-malaga-2026/';
+
+  assert.ok(crawlerPrivate.SEED_YEAR_PAGES.includes(seedUrl));
+
+  const found = crawlerPrivate.discoverCompetitionPages(`
+    <article>
+      <a href="${competitionUrl}">
+        AEP-1 Campeonato de España SUB JUNIOR, Humilladero, Málaga 2026
+      </a>
+    </article>
+  `, seedUrl);
+
+  assert.ok(found.pages.some((page) => page.url === competitionUrl));
+});
+
+test('crawler/discovery: página de competición extrae documentos bajo Resultados Hombres/Mujeres con texto no exacto', () => {
+  const pageUrl = 'https://powerliftingspain.es/aep-1-campeonato-de-espana-sub-junior-humilladero-malaga-2026/';
+  const menUrl = 'https://powerliftingspain.es/wp-content/uploads/2026/04/aep1-sub-h.pdf';
+  const womenUrl = 'https://powerliftingspain.es/wp-content/uploads/2026/04/aep1-sub-m.pdf';
+
+  const docs = crawlerPrivate.extractDocumentsFromCompetitionPage(`
+    <h1>AEP-1 Campeonato de España SUB JUNIOR, Humilladero, Málaga 2026</h1>
+    <h3>Resultados Hombres</h3>
+    <p><a href="${menUrl}">Descargar PDF</a></p>
+    <h3>Resultados Mujeres</h3>
+    <p><a href="${womenUrl}" aria-label="Documento PDF">Ver archivo</a></p>
+  `, pageUrl);
+
+  assert.deepEqual(docs.map((doc) => doc.url).sort(), [menUrl, womenUrl].sort());
+});

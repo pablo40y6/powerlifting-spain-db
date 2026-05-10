@@ -119,6 +119,31 @@ function discoverCompetitionPages(html, pageUrl) {
   };
 }
 
+function findNearestHeadingText($, el) {
+  let current = $(el);
+  for (let depth = 0; depth < 4 && current.length; depth += 1) {
+    const previousHeading = current.prevAll('h1,h2,h3,h4,h5,h6').first();
+    if (previousHeading.length) return normalizeSpaces(previousHeading.text());
+    current = current.parent();
+  }
+  return '';
+}
+
+function buildDocumentLabel($, el) {
+  const link = $(el);
+  const ownLabel = normalizeSpaces(link.text() || link.attr('title') || link.attr('aria-label') || '');
+  const contextualLabel = normalizeSpaces([
+    ownLabel,
+    link.closest('li,p,td,th,div,section,article').first().text(),
+    findNearestHeadingText($, el),
+  ].filter(Boolean).join(' '));
+
+  return {
+    label: ownLabel || contextualLabel || path.basename(link.attr('href') || ''),
+    context: contextualLabel,
+  };
+}
+
 function extractDocumentsFromCompetitionPage(html, pageUrl) {
   const $ = cheerio.load(html);
   const docs = new Map();
@@ -129,8 +154,8 @@ function extractDocumentsFromCompetitionPage(html, pageUrl) {
     const ext = getExtension(href);
     if (!['.pdf', '.xls', '.xlsx'].includes(ext)) return;
 
-    const label = normalizeSpaces($(el).text() || $(el).attr('title') || path.basename(href));
-    if (!isLikelyResultsDocument(label, href)) return;
+    const { label, context } = buildDocumentLabel($, el);
+    if (!isLikelyResultsDocument(context || label, href)) return;
 
     docs.set(href, { url: href, label: label || path.basename(href) });
   });
@@ -406,6 +431,10 @@ module.exports = {
   searchAthletes,
   INDEX_FILE,
   _private: {
+    SEED_YEAR_PAGES,
+    createHttpClient,
+    fetchText,
+    fetchBufferWithCache,
     discoverCompetitionPages,
     extractDocumentsFromCompetitionPage,
     extractPageMeta,
