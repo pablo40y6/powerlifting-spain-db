@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const XLSX = require('xlsx-js-style');
 const { parseDocument, _private } = require('../scraper/parser');
 const { searchAthletes, _private: crawlerPrivate } = require('../scraper/crawler');
-const { isLikelyResultsDocument, looksLikeCompetitionUrl } = require('../scraper/utils');
+const { isLikelyResultsDocument, looksLikeCompetitionUrl, normalizeName } = require('../scraper/utils');
 
 function competition(name = 'Competición de prueba') {
   return _private.buildCompetitionMeta({ pageTitle: name, meetPageUrl: 'https://powerliftingspain.es/test/' }, { name });
@@ -54,22 +54,44 @@ test('modalidad distingue powerlifting completo de movimiento único', async () 
   assert.equal(entries.find((entry) => entry.athleteName === 'Atleta Banca').eventType, 'bench');
 });
 
-test('Saúl Aranda 2026: URL, documento flexible y fila PDF sin año', () => {
+test('Saúl Aranda 2026: URL, documentos Resultados Hombres y fila GOODLIFT Sub Junior', () => {
   const pageUrl = 'https://powerliftingspain.es/aep-1-campeonato-de-espana-sub-junior-humilladero-malaga-2026/';
-  assert.equal(looksLikeCompetitionUrl(pageUrl, 'AEP-1 Campeonato de España Sub Junior Humilladero Málaga 2026'), true);
-  assert.equal(isLikelyResultsDocument('Documento final Sub Junior', 'https://powerliftingspain.es/wp-content/uploads/2026/02/aep-subjunior-humilladero-2026.pdf'), true);
+  const pdfUrl = 'https://powerliftingspain.es/wp-content/uploads/2026/04/Resultados-AEP1-Subjunior-Hombres-2026.pdf';
+  assert.equal(looksLikeCompetitionUrl(pageUrl, 'Campeonato de España SUB JUNIOR Humilladero, Málaga 11 y 12 de abril de 2026'), true);
+  assert.equal(isLikelyResultsDocument('Resultados Hombres', pdfUrl), true);
 
+  const docs = crawlerPrivate.extractDocumentsFromCompetitionPage(`
+    <h1>AEP 1 – Campeonato de España SUB JUNIOR, Humilladero, Málaga 2026</h1>
+    <a href="${pdfUrl}">Resultados Hombres</a>
+  `, pageUrl);
+  assert.equal(docs[0].url, pdfUrl);
+
+  const competitionMeta = _private.buildCompetitionMeta({
+    pageTitle: 'AEP 1 – Campeonato de España SUB JUNIOR, Humilladero, Málaga 2026',
+    meetPageUrl: pageUrl,
+    resultsUrl: pdfUrl,
+    resultsLabel: 'Resultados Hombres',
+    date: '2026-04-11',
+  });
   const entry = _private.parsePdfAthleteLine(
-    '-74 1 Aranda Sanchez Saul POWER CLUB 73,20 8 170 180 190 1 105 112,5 117,5 1 205 215 225 1 532,5 78,40',
-    competition('AEP-1 Campeonato de España Sub Junior Humilladero Málaga 2026'),
+    '2 Aranda Sanchez Saul 2008 ZAB 91.70 0.1317 14 230.0 245.0 252.5 2 135.0 142.5 147.5 4 235.0 245.0 260.0 3 660.0 86.92 9',
+    competitionMeta,
     'M',
-    '-74kg',
+    null,
     'powerlifting'
   );
 
   assert.ok(entry);
-  assert.equal(entry.athleteName, 'Aranda Sanchez Saul');
-  assert.equal(searchAthletes({ athletes: [{ athleteName: entry.athleteName, athleteNameNormalized: entry.athleteNameNormalized, entries: [] }] }, 'Saul Aranda')[0].athleteName, 'Aranda Sanchez Saul');
+  assert.equal(normalizeName(entry.athleteName), 'aranda sanchez saul');
+  assert.equal(entry.competition.meetPageUrl, pageUrl);
+  assert.equal(entry.club, 'ZAB');
+  assert.equal(entry.bodyweight, 91.7);
+  assert.equal(entry.order, 14);
+  assert.equal(entry.total, 660);
+  assert.equal(entry.ipfgl, 86.92);
+  const index = { athletes: [{ athleteName: entry.athleteName, athleteNameNormalized: entry.athleteNameNormalized, entries: [{ competitionName: entry.competition.name }] }] };
+  assert.equal(searchAthletes(index, 'Saul Aranda')[0].athleteName, 'Aranda Sanchez Saul');
+  assert.equal(searchAthletes(index, 'Aranda Sanchez')[0].athleteName, 'Aranda Sanchez Saul');
 });
 
 test('fechas: conserva fecha explícita o year inferido de metadatos/URL sin inventar día', () => {
@@ -83,6 +105,13 @@ test('fechas: conserva fecha explícita o year inferido de metadatos/URL sin inv
   });
   assert.equal(inferred.date, null);
   assert.equal(inferred.year, 2025);
+
+  const pablo = _private.buildCompetitionMeta({
+    pageTitle: 'I Copa Catalana de Powerlifting y Press Banca',
+    resultsLabel: 'Copa Catalana 2023',
+  });
+  assert.equal(pablo.date, null);
+  assert.equal(pablo.year, 2023);
 
   const pageMeta = crawlerPrivate.extractPageMeta('<html><h1>IV Copa Black Crown 2026</h1></html>', 'https://powerliftingspain.es/iv-copa-black-crown-2026/');
   assert.equal(pageMeta.year, 2026);

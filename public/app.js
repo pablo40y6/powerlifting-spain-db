@@ -29,9 +29,10 @@ function formatAttempt(attempt) {
   return `${attempt.weight} kg ${attempt.good ? '✓' : '✗'}`;
 }
 
-function formatDate(dateText) {
-  if (!dateText) return 'Fecha no detectada';
-  return dateText;
+function formatDate(dateText, year) {
+  if (dateText) return dateText;
+  if (year) return String(year);
+  return 'Fecha no detectada';
 }
 
 function renderSummary(summary) {
@@ -175,7 +176,7 @@ function renderCompetition(entry) {
   article.innerHTML = `
     <div class="competition-title">
       <h3>${entry.competitionName}</h3>
-      <span class="muted">${formatDate(entry.competitionDate || entry.competitionLocationDateText)}</span>
+      <span class="muted">${formatDate(entry.competitionDate || entry.competitionLocationDateText, entry.competitionYear)}</span>
     </div>
     ${entry.competitionSubtitle ? `<p class="muted">${entry.competitionSubtitle}</p>` : ''}
     <div class="meta-grid">
