@@ -36,8 +36,8 @@ function formatNumber(value, digits = 1) {
   return Number(value).toLocaleString('es-ES', { maximumFractionDigits: digits });
 }
 
-function formatDate(value) {
-  if (!value) return '—';
+function formatDate(value, year) {
+  if (!value) return year ? String(year) : '—';
   const date = new Date(`${value}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC' });
@@ -145,7 +145,7 @@ function renderTable() {
   for (const row of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${formatDate(row.competitionDate)}</td>
+      <td>${formatDate(row.competitionDate, row.competitionYear)}</td>
       <td><button class="link-button" data-athlete="${row.athleteNameNormalized}">${row.athleteName || '—'}</button></td>
       <td>${row.club || '—'}</td>
       <td>${row.sex || '—'}</td>
@@ -200,7 +200,7 @@ function showAthlete(normalizedName) {
     ${rows.map((row) => `
       <article class="detail-card">
         <h3>${row.competitionName || 'Competición'}</h3>
-        <p class="muted">${formatDate(row.competitionDate)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
+        <p class="muted">${formatDate(row.competitionDate, row.competitionYear)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
         <table class="attempt-table"><tbody>${renderAttempts(row)}</tbody></table>
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
         <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${link(row.resultsUrl, 'Documento de resultados')}</p>

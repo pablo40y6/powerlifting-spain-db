@@ -1508,6 +1508,7 @@ function categoryLimitFromToken(categoryToken) {
 function bodyweightMatchesCategory(bodyweight, categoryToken) {
   if (bodyweight === null || bodyweight === undefined) return false;
   if (bodyweight <= 0 || bodyweight > 250) return false;
+  if (!categoryToken && bodyweight < 30) return false;
 
   const limit = categoryLimitFromToken(categoryToken);
   if (!limit) return true;
@@ -1521,22 +1522,33 @@ function bodyweightMatchesCategory(bodyweight, categoryToken) {
   return bodyweight <= limit.value + 0.01;
 }
 
+function isValidPdfOrder(value) {
+  return Number.isInteger(value) && value > 0 && value <= 99999;
+}
+
 function findPdfBodyweightOrder(tokens, startIndex, categoryToken = null) {
   for (let index = startIndex; index < tokens.length - 3; index += 1) {
     const bodyweight = parseLocaleNumber(tokens[index]);
-    const order = parseLocaleNumber(tokens[index + 1]);
-    const remaining = tokens.length - (index + 2);
-
-    if (bodyweight === null || order === null) continue;
     if (!bodyweightMatchesCategory(bodyweight, categoryToken)) continue;
 
+    const adjacentOrder = parseLocaleNumber(tokens[index + 1]);
+    const adjacentRemaining = tokens.length - (index + 2);
     // En competiciones grandes la columna Ord. puede ser de 4 digitos
     // (por ejemplo 1214 en SBD Cup 2025). Antes se limitaba a 999 y eso
     // provocaba que el parser saltase el peso corporal real y tomase una
     // sentadilla como peso corporal.
-    if (!Number.isInteger(order) || order <= 0 || order > 99999) continue;
-    if (remaining < 6) continue;
-    return { index, bodyweight, order };
+    if (isValidPdfOrder(adjacentOrder) && adjacentRemaining >= 6) {
+      return { index, bodyweight, order: adjacentOrder, attemptsStartIndex: index + 2 };
+    }
+
+    const coefficient = parseLocaleNumber(tokens[index + 1]);
+    const goodliftOrder = parseLocaleNumber(tokens[index + 2]);
+    const goodliftRemaining = tokens.length - (index + 3);
+    // Los reportes GOODLIFT exportados para Sub Junior insertan GL Coef entre
+    // peso corporal y lote: Bwt GL Coef Lot. No lo confundimos con el peso.
+    if (coefficient !== null && coefficient > 0 && coefficient < 1 && isValidPdfOrder(goodliftOrder) && goodliftRemaining >= 6) {
+      return { index, bodyweight, order: goodliftOrder, attemptsStartIndex: index + 3 };
+    }
   }
 
   return null;
@@ -1585,12 +1597,38 @@ function splitPdfNameAndClubWithoutYear(tokens) {
   };
 }
 
+
+function resolvePdfTotalIpfgl(tokens) {
+  const last = tokens.length - 1;
+  const total = parseLocaleNumber(tokens[last - 1]);
+  const ipfgl = parseLocaleNumber(tokens[last]);
+  if (total === null || ipfgl === null) return null;
+
+  const maybeTeamPoints = parseLocaleNumber(tokens[last]);
+  const maybeGoodliftTotal = parseLocaleNumber(tokens[last - 2]);
+  const maybeGoodliftIpfgl = parseLocaleNumber(tokens[last - 1]);
+  if (
+    maybeGoodliftTotal !== null &&
+    maybeGoodliftIpfgl !== null &&
+    Number.isInteger(maybeTeamPoints) &&
+    maybeTeamPoints >= 0 &&
+    maybeTeamPoints <= 20 &&
+    maybeGoodliftTotal > maybeGoodliftIpfgl
+  ) {
+    return { total: maybeGoodliftTotal, ipfgl: maybeGoodliftIpfgl, statsStartIndex: last - 2 };
+  }
+
+  return { total, ipfgl, statsStartIndex: last - 1 };
+}
+
 function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCategory, liftType = 'powerlifting') {
   const rowCategory = formatCategoryToken(tokens[0]);
 
   let nameStartIndex = 1;
   let placing = null;
-  if (tokens[1] && (/^\d+$/.test(tokens[1]) || /^(DT|DQ|AI)$/i.test(tokens[1]))) {
+  if (!rowCategory && tokens[0] && (/^\d+$/.test(tokens[0]) || /^(DT|DQ|AI)$/i.test(tokens[0]))) {
+    placing = tokens[0];
+  } else if (tokens[1] && (/^\d+$/.test(tokens[1]) || /^(DT|DQ|AI)$/i.test(tokens[1]))) {
     placing = tokens[1];
     nameStartIndex = 2;
   }
@@ -1602,12 +1640,12 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
   const split = splitPdfNameAndClubWithoutYear(tokens.slice(nameStartIndex, bodyweightOrder.index));
   if (!split || !split.lifterName || !split.club) return null;
 
-  const total = parseLocaleNumber(tokens[tokens.length - 2]);
-  const ipfgl = parseLocaleNumber(tokens[tokens.length - 1]);
-  if (total === null || ipfgl === null) return null;
+  const totalIpfgl = resolvePdfTotalIpfgl(tokens);
+  if (!totalIpfgl) return null;
+  const { total, ipfgl, statsStartIndex } = totalIpfgl;
 
   const isSingleLift = liftType === 'bench' || liftType === 'deadlift';
-  const rawAttemptTokens = tokens.slice(bodyweightOrder.index + 2, tokens.length - 2);
+  const rawAttemptTokens = tokens.slice(bodyweightOrder.attemptsStartIndex || bodyweightOrder.index + 2, statsStartIndex);
   let rebuiltAttemptTokens = null;
   let movementRanks = null;
 
@@ -1663,7 +1701,9 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
 
   let nameStartIndex = 1;
   let placing = null;
-  if (tokens[1] && (/^\d+$/.test(tokens[1]) || /^(DT|DQ|AI)$/i.test(tokens[1]))) {
+  if (!rowCategory && tokens[0] && (/^\d+$/.test(tokens[0]) || /^(DT|DQ|AI)$/i.test(tokens[0]))) {
+    placing = tokens[0];
+  } else if (tokens[1] && (/^\d+$/.test(tokens[1]) || /^(DT|DQ|AI)$/i.test(tokens[1]))) {
     placing = tokens[1];
     nameStartIndex = 2;
   }
@@ -1689,12 +1729,12 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
   const club = normalizeSpaces(tokens.slice(yearIndex + 1, bodyweightOrder.index).join(' '));
   if (!club) return null;
 
-  const total = parseLocaleNumber(tokens[tokens.length - 2]);
-  const ipfgl = parseLocaleNumber(tokens[tokens.length - 1]);
-  if (total === null || ipfgl === null) return null;
+  const totalIpfgl = resolvePdfTotalIpfgl(tokens);
+  if (!totalIpfgl) return null;
+  const { total, ipfgl, statsStartIndex } = totalIpfgl;
 
   const isSingleLift = liftType === 'bench' || liftType === 'deadlift';
-  const rawAttemptTokens = tokens.slice(bodyweightOrder.index + 2, tokens.length - 2);
+  const rawAttemptTokens = tokens.slice(bodyweightOrder.attemptsStartIndex || bodyweightOrder.index + 2, statsStartIndex);
   let rebuiltAttemptTokens = null;
   let movementRanks = null;
 
