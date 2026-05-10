@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const XLSX = require('xlsx-js-style');
 const { parseDocument, _private } = require('../scraper/parser');
-const { looksLikeCompetitionUrl } = require('../scraper/utils');
+const { searchAthletes, _private: crawlerPrivate } = require('../scraper/crawler');
+const { isLikelyResultsDocument, looksLikeCompetitionUrl } = require('../scraper/utils');
 
 function competition(name = 'Competición de prueba') {
   return _private.buildCompetitionMeta({ pageTitle: name, meetPageUrl: 'https://powerliftingspain.es/test/' }, { name });
@@ -13,6 +14,80 @@ function hasFailedAttempt(entry) {
     (entry.attempts[lift] || []).some((attempt) => attempt && attempt.good === false)
   );
 }
+
+
+
+test('búsqueda por tokens normalizados sin depender del orden', () => {
+  const index = {
+    athletes: [
+      { athleteName: 'Garin Martin Cristian', athleteNameNormalized: 'garin martin cristian', entries: [] },
+      { athleteName: 'Borque Espinosa Antonio', athleteNameNormalized: 'borque espinosa antonio', entries: [] },
+      { athleteName: 'Martinez Cordova Pablo', athleteNameNormalized: 'martinez cordova pablo', entries: [] },
+    ],
+  };
+
+  assert.equal(searchAthletes(index, 'Cristian Garin')[0].athleteName, 'Garin Martin Cristian');
+  assert.equal(searchAthletes(index, 'Garin Cristian')[0].athleteName, 'Garin Martin Cristian');
+  assert.equal(searchAthletes(index, 'Antonio Borque')[0].athleteName, 'Borque Espinosa Antonio');
+  assert.equal(searchAthletes(index, 'Borque Antonio')[0].athleteName, 'Borque Espinosa Antonio');
+  assert.equal(searchAthletes(index, 'Pablo Cordova')[0].athleteName, 'Martinez Cordova Pablo');
+});
+
+test('modalidad distingue powerlifting completo de movimiento único', async () => {
+  const wb = XLSX.utils.book_new();
+  const powerlifting = XLSX.utils.aoa_to_sheet([
+    [], ['Open Test 2026'], ['Powerlifting'], ['Madrid, 1 enero 2026'], ['HOMBRES'], ['-74kg'],
+    ['Pos', 'Levantador', 'Año', 'Club', 'Peso', 'Coef.', 'Ord.', 'Sentadillas', '', '', 'Press Banca', '', '', 'Peso Muerto', '', '', 'Total', 'IPF GL'],
+    [1, 'Atleta Completo', 1990, 'CLUB', 73.5, 1, 1, 180, 190, 200, 110, 120, 130, 220, 230, 240, 570, 85],
+  ]);
+  const bench = XLSX.utils.aoa_to_sheet([
+    [], ['Open Test 2026'], ['Press Banca'], ['Madrid, 1 enero 2026'], ['HOMBRES'], ['-74kg'],
+    ['Pos', 'Levantador', 'Año', 'Club', 'Peso', 'Coef.', 'Ord.', 'Press Banca', '', '', 'Total', 'IPF GL'],
+    [1, 'Atleta Banca', 1991, 'CLUB', 72.5, 1, 2, 140, 145, 150, 150, 60],
+  ]);
+  XLSX.utils.book_append_sheet(wb, powerlifting, 'Powerlifting');
+  XLSX.utils.book_append_sheet(wb, bench, 'Banca');
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  const entries = await parseDocument(buffer, '.xlsx', { pageTitle: 'Open Test 2026' });
+  assert.equal(entries.find((entry) => entry.athleteName === 'Atleta Completo').eventType, 'powerlifting');
+  assert.equal(entries.find((entry) => entry.athleteName === 'Atleta Banca').eventType, 'bench');
+});
+
+test('Saúl Aranda 2026: URL, documento flexible y fila PDF sin año', () => {
+  const pageUrl = 'https://powerliftingspain.es/aep-1-campeonato-de-espana-sub-junior-humilladero-malaga-2026/';
+  assert.equal(looksLikeCompetitionUrl(pageUrl, 'AEP-1 Campeonato de España Sub Junior Humilladero Málaga 2026'), true);
+  assert.equal(isLikelyResultsDocument('Documento final Sub Junior', 'https://powerliftingspain.es/wp-content/uploads/2026/02/aep-subjunior-humilladero-2026.pdf'), true);
+
+  const entry = _private.parsePdfAthleteLine(
+    '-74 1 Aranda Sanchez Saul POWER CLUB 73,20 8 170 180 190 1 105 112,5 117,5 1 205 215 225 1 532,5 78,40',
+    competition('AEP-1 Campeonato de España Sub Junior Humilladero Málaga 2026'),
+    'M',
+    '-74kg',
+    'powerlifting'
+  );
+
+  assert.ok(entry);
+  assert.equal(entry.athleteName, 'Aranda Sanchez Saul');
+  assert.equal(searchAthletes({ athletes: [{ athleteName: entry.athleteName, athleteNameNormalized: entry.athleteNameNormalized, entries: [] }] }, 'Saul Aranda')[0].athleteName, 'Aranda Sanchez Saul');
+});
+
+test('fechas: conserva fecha explícita o year inferido de metadatos/URL sin inventar día', () => {
+  const explicit = _private.buildCompetitionMeta({ pageTitle: 'Copa Catalana 2023' }, { locationDateText: 'Barcelona, 1 enero 2023' });
+  assert.equal(explicit.date, '2023-01-01');
+  assert.equal(explicit.year, 2023);
+
+  const inferred = _private.buildCompetitionMeta({
+    pageTitle: 'SBD Cup 2025',
+    meetPageUrl: 'https://powerliftingspain.es/sbd-cup-2025/',
+  });
+  assert.equal(inferred.date, null);
+  assert.equal(inferred.year, 2025);
+
+  const pageMeta = crawlerPrivate.extractPageMeta('<html><h1>IV Copa Black Crown 2026</h1></html>', 'https://powerliftingspain.es/iv-copa-black-crown-2026/');
+  assert.equal(pageMeta.year, 2026);
+});
+
 
 test('Pablo Martínez Córdova, Copa Catalana 2023: conserva nulos visuales de Excel', async () => {
   const wb = XLSX.utils.book_new();

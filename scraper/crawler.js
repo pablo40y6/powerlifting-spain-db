@@ -13,7 +13,8 @@ const {
   looksLikeCompetitionUrl,
   normalizeName,
   normalizeSpaces,
-  parseSpanishDate,
+  firstExtractedYear,
+  firstParsedSpanishDate,
   toAbsoluteUrl,
 } = require('./utils');
 
@@ -65,10 +66,23 @@ function createHttpClient() {
   });
 }
 
-function extractPageTitle(html) {
+function extractPageMeta(html, pageUrl) {
   const $ = cheerio.load(html);
   const title = cleanCompetitionTitle($('h1').first().text() || $('title').first().text() || '');
-  return title || null;
+  const text = normalizeSpaces([
+    $('time[datetime]').first().attr('datetime'),
+    $('.entry-date').first().text(),
+    $('.posted-on').first().text(),
+    $('.entry-content').first().text(),
+    title,
+    pageUrl,
+  ].filter(Boolean).join(' '));
+  const parsedDate = firstParsedSpanishDate([text]);
+  return {
+    pageTitle: title || null,
+    date: parsedDate ? parsedDate.toISOString().slice(0, 10) : null,
+    year: parsedDate ? parsedDate.getUTCFullYear() : firstExtractedYear([title, pageUrl, text]),
+  };
 }
 
 function discoverCompetitionPages(html, pageUrl) {
@@ -172,6 +186,9 @@ function entryToAthleteCard(entry) {
     total: entry.total,
     ipfgl: entry.ipfgl,
     attempts: entry.attempts,
+    liftType: entry.liftType,
+    eventType: entry.eventType || entry.liftType || 'powerlifting',
+    competitionYear: entry.competition.year,
   };
 }
 
@@ -263,9 +280,12 @@ async function buildIndex({ onProgress } = {}) {
           // merge puede usar Excel para los campos tabulares y PDF para
           // recuperar nulos que en Excel antiguo solo aparecen en rojo/tachado.
           const docs = extractDocumentsFromCompetitionPage(html, page.url);
+          const pageMeta = extractPageMeta(html, page.url);
           pageMetas.push({
             url: page.url,
-            pageTitle: extractPageTitle(html) || cleanCompetitionTitle(page.anchorText || ''),
+            pageTitle: pageMeta.pageTitle || cleanCompetitionTitle(page.anchorText || ''),
+            date: pageMeta.date,
+            year: pageMeta.year,
             docs,
           });
         } catch (error) {
@@ -285,6 +305,8 @@ async function buildIndex({ onProgress } = {}) {
         resultsLabel: doc.label,
         meetPageUrl: page.url,
         pageTitle: page.pageTitle,
+        date: page.date,
+        year: page.year,
       });
     }
   }
@@ -357,15 +379,14 @@ function scoreAthlete(query, athlete) {
   if (!normalizedQuery) return 0;
   const athleteName = athlete.athleteNameNormalized;
   if (athleteName === normalizedQuery) return 100;
-  if (athleteName.includes(normalizedQuery)) return 90;
-  if (normalizedQuery.includes(athleteName)) return 85;
 
   const queryTokens = tokenize(normalizedQuery);
+  if (!queryTokens.length) return 0;
   const nameTokens = new Set(tokenize(athleteName));
-  const overlap = queryTokens.filter((token) => nameTokens.has(token)).length;
-  if (!overlap) return 0;
-  const tokenScore = Math.round((overlap / queryTokens.length) * 70);
-  return tokenScore;
+  const allTokensPresent = queryTokens.every((token) => nameTokens.has(token));
+  if (!allTokensPresent) return 0;
+
+  return queryTokens.length === nameTokens.size ? 95 : 90;
 }
 
 function searchAthletes(index, query) {
@@ -384,4 +405,10 @@ module.exports = {
   loadIndex,
   searchAthletes,
   INDEX_FILE,
+  _private: {
+    discoverCompetitionPages,
+    extractDocumentsFromCompetitionPage,
+    extractPageMeta,
+    scoreAthlete,
+  },
 };
