@@ -26,12 +26,15 @@ tests/                   regresiones del parser
 npm ci
 npm run build:index
 npm run build:web
+npm run audit:index
 npm test
 ```
 
 - `npm run build:index` recorre PowerliftingSpain, descarga PDFs/Excels a una carpeta temporal del sistema, parsea los documentos y escribe `data/index.json`.
 - `npm run build:web` copia `web/index.html`, `web/app.js`, `web/styles.css` y `data/index.json` a `dist/`.
-- `npm test` ejecuta pruebas de regresión sobre casos problemáticos del parser.
+- `npm run audit:index` analiza `data/index.json`, imprime un resumen de calidad de datos y genera `data/audit-report.json` y `data/audit-report.md`; por defecto no falla si encuentra warnings.
+- `npm run audit:index -- --strict` devuelve exit code 1 si la auditoría encuentra errores críticos.
+- `npm test` ejecuta pruebas de regresión sobre casos problemáticos del parser y helpers de auditoría.
 
 ## Desarrollo local
 
@@ -67,6 +70,7 @@ El workflow `.github/workflows/update-and-deploy.yml` se puede lanzar manualment
 No se versionan documentos descargados ni salidas generadas:
 
 - `data/index.json` se genera en cada build;
+- `data/audit-report.json` y `data/audit-report.md` se generan con `npm run audit:index`;
 - `dist/` se genera para Pages;
 - `cache/` queda ignorado por compatibilidad histórica;
 - las descargas del scraper van por defecto a `os.tmpdir()` o a `PLS_DOCS_DIR` si se define.
