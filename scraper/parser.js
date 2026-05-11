@@ -1445,17 +1445,17 @@ function goodliftAttemptsObject({ squatTokens, benchTokens, deadliftTokens }) {
 }
 
 function parseGoodliftDetailedScoresheetLine(line, competition, sex, fallbackCategory) {
-  if (shouldRejectGoodliftTeamOrSummaryLine(line)) return null;
+  if (shouldRejectGoodliftTeamOrSummaryLine(line) || textLooksLikeTeamPoints(line)) return null;
 
   const tokens = normalizeSpaces(line).split(' ').filter(Boolean);
   if (tokens.length < 24) return null;
 
   const placingToken = tokens[tokens.length - 1];
-  if (!/^\d+$|^(DT|DQ|AI)$/i.test(placingToken)) return null;
+  if (!isGoodliftPlacingToken(placingToken)) return null;
 
   let yearIndex = -1;
   for (let index = tokens.length - 2; index >= 4; index -= 1) {
-    if (/^(19|20)\d{2}$/.test(tokens[index])) {
+    if (isReasonableBirthYearToken(tokens[index])) {
       yearIndex = index;
       break;
     }
@@ -1463,8 +1463,8 @@ function parseGoodliftDetailedScoresheetLine(line, competition, sex, fallbackCat
   if (yearIndex < 4 || yearIndex >= tokens.length - 1) return null;
 
   const nameTokens = tokens.slice(yearIndex + 1, tokens.length - 1);
+  if (!goodliftNameTokensLookLikePerson(nameTokens)) return null;
   const lifterName = normalizeSpaces(nameTokens.join(' '));
-  if (!lifterName) return null;
 
   const club = tokens[yearIndex - 1];
   if (shouldRejectGoodliftTeamOrSummaryLine(line, lifterName, club)) return null;
@@ -1472,13 +1472,18 @@ function parseGoodliftDetailedScoresheetLine(line, competition, sex, fallbackCat
   const coefficient = parseLocaleNumber(tokens[yearIndex - 3]);
   const order = parseLocaleNumber(tokens[yearIndex - 4]);
   if (!club || !bodyweightMatchesCategory(bodyweight, null) || !isValidPdfOrder(order)) return null;
+  if (coefficient === null || coefficient <= 0 || coefficient > 1) return null;
 
   const stats = tokens.slice(0, yearIndex - 4);
   if (stats.length < 15) return null;
 
   const ipfgl = parseLocaleNumber(stats[1]);
   const total = parseLocaleNumber(stats[2]);
-  if (ipfgl === null || total === null) return null;
+  if (ipfgl === null || total === null || ipfgl <= 0 || total <= 0) return null;
+
+  const parsedAttempts = [stats[4], stats[5], stats[6], stats[8], stats[9], stats[10], stats[12], stats[13], stats[14]]
+    .map(parseGoodliftAttempt);
+  if (parsedAttempts.filter((attempt) => attempt.weight !== null).length < 6) return null;
 
   const deadliftRank = parseLocaleNumber(stats[3]);
   const benchRank = parseLocaleNumber(stats[7]);
@@ -1599,35 +1604,27 @@ function parseGoodliftDetailedScoresheetLines(lines, competition, sex, fallbackC
   const entries = [];
   let currentCategory = fallbackCategory;
   let currentSex = sex;
-  let inDetailedScoresheet = false;
-  const detailedLines = [];
+  const candidateLines = [];
 
   for (const originalLine of lines) {
-    let line = originalLine;
-    if (/DETAILED SCORESHEET/i.test(line)) {
-      inDetailedScoresheet = true;
-      line = normalizeSpaces(line.replace(/^.*?DETAILED SCORESHEET/i, ''));
-      if (!line) continue;
-    }
+    const line = normalizeSpaces(originalLine);
+    if (!line) continue;
 
-    if (!inDetailedScoresheet) continue;
-    detailedLines.push(line);
-    if (isGoodliftSummarySectionLine(line)) continue;
+    candidateLines.push(line);
 
     const lineSex = sexFromText(line);
     if (lineSex) currentSex = lineSex;
 
     const lineCategory = formatCategoryToken(line);
-    if (lineCategory) {
-      currentCategory = lineCategory;
-      continue;
-    }
+    if (lineCategory) currentCategory = lineCategory;
+
+    if (isGoodliftSummarySectionLine(line)) continue;
 
     const athlete = parseGoodliftDetailedScoresheetLine(line, competition, currentSex, currentCategory);
     if (athlete) entries.push(athlete);
   }
 
-  const tokens = normalizeSpaces(detailedLines.join(' ')).split(' ').filter(Boolean);
+  const tokens = normalizeSpaces(candidateLines.join(' ')).split(' ').filter(Boolean);
   const tokenEntries = parseGoodliftDetailedScoresheetTokens(tokens, competition, sex, fallbackCategory);
   if (tokenEntries.length > entries.length) return tokenEntries;
 
