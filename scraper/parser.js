@@ -1032,25 +1032,25 @@ function parseExcelDocument(buffer, baseMeta) {
         );
       }
 
-      entries.push(
-        makeAthleteEntry({
-          competition,
-          sex,
-          category,
-          placing: placingRaw,
-          lifterName,
-          yearOfBirth,
-          club,
-          bodyweight: currentLayout.bodyweightIndex >= 0 ? parseLocaleNumber(row[currentLayout.bodyweightIndex]) : null,
-          coefficient: currentLayout.coefficientIndex >= 0 ? parseLocaleNumber(row[currentLayout.coefficientIndex]) : null,
-          order: currentLayout.orderIndex >= 0 ? parseLocaleNumber(row[currentLayout.orderIndex]) : null,
-          attempts,
-          total: reportedTotal,
-          ipfgl: currentLayout.ipfglIndex >= 0 ? parseLocaleNumber(row[currentLayout.ipfglIndex]) : null,
-          liftType: currentLayout.liftType,
-          movementRanks,
-        })
-      );
+      const entry = makeAthleteEntry({
+        competition,
+        sex,
+        category,
+        placing: placingRaw,
+        lifterName,
+        yearOfBirth,
+        club,
+        bodyweight: currentLayout.bodyweightIndex >= 0 ? parseLocaleNumber(row[currentLayout.bodyweightIndex]) : null,
+        coefficient: currentLayout.coefficientIndex >= 0 ? parseLocaleNumber(row[currentLayout.coefficientIndex]) : null,
+        order: currentLayout.orderIndex >= 0 ? parseLocaleNumber(row[currentLayout.orderIndex]) : null,
+        attempts,
+        total: reportedTotal,
+        ipfgl: currentLayout.ipfglIndex >= 0 ? parseLocaleNumber(row[currentLayout.ipfglIndex]) : null,
+        liftType: currentLayout.liftType,
+        movementRanks,
+      });
+
+      if (!shouldRejectNonAthleteResult(entry)) entries.push(entry);
     }
   }
 
@@ -1382,6 +1382,26 @@ function hasTeamPointsFormula(value) {
   return /\[(?:\s*\d+\s*\+)+\s*\d+\s*\]/.test(String(value || ''));
 }
 
+function isRankingPointsCell(value) {
+  return /^\s*\[\s*\d+(?:[.,]\d+)?\s*\]\s*$/.test(String(value || ''));
+}
+
+function athleteNameHasClubShape(name) {
+  const raw = normalizeSpaces(name);
+  if (!raw) return true;
+
+  const normalized = normalizeName(raw);
+  if (/barbell/.test(normalized)) return true;
+
+  const letters = raw.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
+  const upperLetters = raw.replace(/[^A-ZÁÉÍÓÚÜÑ]/g, '');
+  const allCaps = letters.length >= 6 && upperLetters.length === letters.length;
+  const hasTeamSeparators = /[-'’]/.test(raw);
+  if (allCaps && hasTeamSeparators) return true;
+
+  return false;
+}
+
 function athleteNameLooksLikeClubOrTeam(name, options = {}) {
   const raw = normalizeSpaces(name);
   const normalized = normalizeName(raw);
@@ -1389,7 +1409,7 @@ function athleteNameLooksLikeClubOrTeam(name, options = {}) {
   if (hasTeamPointsFormula(raw)) return true;
 
   const teamWords = /\b(powerlifting|barbell|strength|sparta|ironside|club|team|soy\s+powerlifter|gimnasio|gym|academy|box|crossfit)\b/;
-  if (teamWords.test(normalized)) return true;
+  if (teamWords.test(normalized) || /barbell/.test(normalized)) return true;
 
   const letters = raw.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
   const upperLetters = raw.replace(/[^A-ZÁÉÍÓÚÜÑ]/g, '');
@@ -1407,6 +1427,28 @@ function resultLooksLikeTeamOrSummary(entry) {
     hasTeamPointsFormula(club) ||
     isGoodliftSummarySectionLine(athleteName) ||
     /^\s*(team\s+points|best\s+lifters|club\s+ranking|ranking\s+(?:de\s+)?club(?:es)?|abbreviations|club\s+abbreviations)\b/i.test(String(athleteName || ''));
+}
+
+function entryHasAnyAttemptWeight(entry) {
+  return ['squat', 'bench', 'deadlift'].some((movement) =>
+    (entry?.attempts?.[movement] || []).some((attempt) => attempt && attempt.weight !== null && attempt.weight !== undefined)
+  );
+}
+
+function shouldRejectNonAthleteResult(entry) {
+  const athleteName = entry?.athleteName ?? entry?.lifterName ?? '';
+  const club = entry?.club ?? '';
+  if (hasTeamPointsFormula(athleteName) || hasTeamPointsFormula(club)) return true;
+
+  const hasNoScore = (entry?.total === null || entry?.total === undefined) &&
+    (entry?.ipfgl === null || entry?.ipfgl === undefined);
+
+  return Boolean(
+    hasNoScore &&
+    !entryHasAnyAttemptWeight(entry) &&
+    isRankingPointsCell(club) &&
+    (athleteNameLooksLikeClubOrTeam(athleteName) || athleteNameHasClubShape(athleteName))
+  );
 }
 
 function shouldRejectGoodliftTeamOrSummaryLine(line, lifterName = '', club = '') {
@@ -2349,6 +2391,8 @@ function mergeAthleteEntries(entries) {
   const byKey = new Map();
 
   for (const entry of entries) {
+    if (shouldRejectNonAthleteResult(entry)) continue;
+
     const datePart = entry.competition.date || '';
     const competitionKey = entry.competition.meetPageUrl
       ? entry.competition.meetPageUrl
@@ -2402,6 +2446,7 @@ module.exports = {
     buildCompetitionMeta,
     makeAthleteEntry,
     resultLooksLikeTeamOrSummary,
+    shouldRejectNonAthleteResult,
     athleteNameLooksLikeClubOrTeam,
     parsePdfAthleteLine,
     parsePdfAthleteLineWithoutYear,
