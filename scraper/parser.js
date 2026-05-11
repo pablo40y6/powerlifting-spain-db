@@ -1386,6 +1386,13 @@ function isRankingPointsCell(value) {
   return /^\s*\[\s*\d+(?:[.,]\d+)?\s*\]\s*$/.test(String(value || ''));
 }
 
+function hasRankingOrTeamPointsToken(value) {
+  const text = String(value || '');
+  return /\[\s*\d+(?:[.,]\d+)?\s*\]/.test(text) ||
+    /\b(?:gl\s*)?pts?\b/i.test(text) ||
+    hasTeamPointsFormula(text);
+}
+
 function athleteNameHasClubShape(name) {
   const raw = normalizeSpaces(name);
   if (!raw) return true;
@@ -1435,6 +1442,16 @@ function entryHasAnyAttemptWeight(entry) {
   );
 }
 
+function entryHasSignificantSportAttempt(entry) {
+  return ['squat', 'bench', 'deadlift'].some((movement) =>
+    (entry?.attempts?.[movement] || []).some((attempt) => {
+      if (!attempt || attempt.weight === null || attempt.weight === undefined) return false;
+      const weight = Number(attempt.weight);
+      return Number.isFinite(weight) && Math.abs(weight) >= 20;
+    })
+  );
+}
+
 function shouldRejectNonAthleteResult(entry) {
   const athleteName = entry?.athleteName ?? entry?.lifterName ?? '';
   const club = entry?.club ?? '';
@@ -1442,12 +1459,24 @@ function shouldRejectNonAthleteResult(entry) {
 
   const hasNoScore = (entry?.total === null || entry?.total === undefined) &&
     (entry?.ipfgl === null || entry?.ipfgl === undefined);
+  const hasTeamRankingClubToken = isRankingPointsCell(club) || hasRankingOrTeamPointsToken(club);
+  const athleteNameLooksLikeTeam = athleteNameLooksLikeClubOrTeam(athleteName) || athleteNameHasClubShape(athleteName);
+
+  if (
+    athleteNameLooksLikeTeam &&
+    hasTeamRankingClubToken &&
+    (entry?.bodyweight === null || entry?.bodyweight === undefined) &&
+    entry?.isRankable === false &&
+    !entryHasSignificantSportAttempt(entry)
+  ) {
+    return true;
+  }
 
   return Boolean(
     hasNoScore &&
     !entryHasAnyAttemptWeight(entry) &&
     isRankingPointsCell(club) &&
-    (athleteNameLooksLikeClubOrTeam(athleteName) || athleteNameHasClubShape(athleteName))
+    athleteNameLooksLikeTeam
   );
 }
 

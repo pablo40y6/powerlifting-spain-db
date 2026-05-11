@@ -21,6 +21,13 @@ function emptyAttempts() {
   return { squat: empty(), bench: empty(), deadlift: empty() };
 }
 
+
+function deadliftOnlyAttempt(weight) {
+  const attempts = emptyAttempts();
+  attempts.deadlift[0] = { raw: String(weight), weight, good: true };
+  return attempts;
+}
+
 function validAttempts() {
   return {
     squat: [{ raw: '230', weight: 230, good: true }],
@@ -83,6 +90,70 @@ test('no indexa filas de clubes con ranking, sin total/IPF GL ni intentos', () =
   assert.equal(parserPrivate.shouldRejectNonAthleteResult(clubRows[0]), true);
   assert.equal(parserPrivate.shouldRejectNonAthleteResult(clubRows[1]), true);
   assert.deepEqual(mergeAthleteEntries(clubRows), []);
+});
+
+
+test('no indexa filas de clasificación por clubes con puntos desplazados', () => {
+  const clubRows = [
+    athleteEntry({
+      competition: competition('I Campeonato Interregional del ESTE'),
+      lifterName: "ALTEA-FINESTRAT-L'ALFAS",
+      club: '[12]',
+      category: '+84kg',
+      placing: '3',
+      bodyweight: null,
+      attempts: deadliftOnlyAttempt(8),
+      total: 78.36,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    }),
+    athleteEntry({
+      competition: competition('Copa de España OPEN (ABSOLUTO)'),
+      lifterName: "ALTEA-FINESTRAT-L'ALFAS",
+      club: '[12]',
+      category: '+120kg',
+      placing: '10',
+      bodyweight: null,
+      attempts: deadliftOnlyAttempt(6),
+      total: 86,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    }),
+    athleteEntry({
+      competition: competition('30º Campeonato de España Absoluto de PRESS BANCA'),
+      lifterName: "ALTEA-FINESTRAT-L'ALFAS",
+      club: '[7] 64,37 GL Pts',
+      category: '+120kg',
+      placing: '15',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'bench',
+    }),
+  ];
+
+  assert.equal(parserPrivate.shouldRejectNonAthleteResult(clubRows[0]), true);
+  assert.equal(parserPrivate.shouldRejectNonAthleteResult(clubRows[1]), true);
+  assert.equal(parserPrivate.shouldRejectNonAthleteResult(clubRows[2]), true);
+  assert.deepEqual(mergeAthleteEntries(clubRows), []);
+});
+
+test('no filtra atletas con nombre personal aunque tengan datos parciales raros', () => {
+  const partialAthlete = athleteEntry({
+    lifterName: 'Aranda Sanchez Saul',
+    club: '[12]',
+    bodyweight: null,
+    attempts: deadliftOnlyAttempt(8),
+    total: 86,
+    ipfgl: null,
+    liftType: 'powerlifting',
+  });
+
+  assert.equal(parserPrivate.shouldRejectNonAthleteResult(partialAthlete), false);
+  assert.deepEqual(mergeAthleteEntries([partialAthlete]).map((entry) => entry.athleteName), [
+    'Aranda Sanchez Saul',
+  ]);
 });
 
 test('mantiene atletas reales de regresión aunque el filtro de clubes esté activo', () => {
