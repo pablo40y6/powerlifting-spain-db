@@ -1378,17 +1378,35 @@ function textLooksLikeTeamPoints(value) {
   return /\[(?:\s*\d+\s*\+)+\s*\d+\s*\]/.test(String(value || ''));
 }
 
-function athleteNameLooksLikeClubOrTeam(name) {
-  const normalized = normalizeName(name);
-  if (!normalized) return true;
+function hasTeamPointsFormula(value) {
+  return /\[(?:\s*\d+\s*\+)+\s*\d+\s*\]/.test(String(value || ''));
+}
 
-  const teamWords = /\b(powerlifting|strength|sparta|ironside|club|team|soy\s+powerlifter|albacete|murcia|madrid|barcelona|gimnasio|academy|box|crossfit)\b/;
+function athleteNameLooksLikeClubOrTeam(name, options = {}) {
+  const raw = normalizeSpaces(name);
+  const normalized = normalizeName(raw);
+  if (!normalized) return true;
+  if (hasTeamPointsFormula(raw)) return true;
+
+  const teamWords = /\b(powerlifting|barbell|strength|sparta|ironside|club|team|soy\s+powerlifter|gimnasio|gym|academy|box|crossfit)\b/;
   if (teamWords.test(normalized)) return true;
 
-  const letters = String(name || '').replace(/[^A-Za-zÁÉÍÓÚÜÑ]/g, '');
-  if (letters.length >= 6 && letters === letters.toUpperCase()) return true;
+  const letters = raw.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
+  const upperLetters = raw.replace(/[^A-ZÁÉÍÓÚÜÑ]/g, '');
+  const allCaps = letters.length >= 6 && upperLetters.length === letters.length;
+  if (options.rejectAllCaps !== false && allCaps) return true;
 
   return false;
+}
+
+function resultLooksLikeTeamOrSummary(entry) {
+  const athleteName = entry?.athleteName ?? entry?.lifterName ?? '';
+  const club = entry?.club ?? '';
+  return athleteNameLooksLikeClubOrTeam(athleteName, { rejectAllCaps: false }) ||
+    hasTeamPointsFormula(athleteName) ||
+    hasTeamPointsFormula(club) ||
+    isGoodliftSummarySectionLine(athleteName) ||
+    /^\s*(team\s+points|best\s+lifters|club\s+ranking|ranking\s+(?:de\s+)?club(?:es)?|abbreviations|club\s+abbreviations)\b/i.test(String(athleteName || ''));
 }
 
 function shouldRejectGoodliftTeamOrSummaryLine(line, lifterName = '', club = '') {
@@ -2383,6 +2401,8 @@ module.exports = {
   _private: {
     buildCompetitionMeta,
     makeAthleteEntry,
+    resultLooksLikeTeamOrSummary,
+    athleteNameLooksLikeClubOrTeam,
     parsePdfAthleteLine,
     parsePdfAthleteLineWithoutYear,
     parsePdfText,

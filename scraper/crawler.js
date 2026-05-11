@@ -5,7 +5,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const pLimit = require('p-limit').default;
 const sanitizeFilename = require('sanitize-filename');
-const { parseDocument, mergeAthleteEntries } = require('./parser');
+const { parseDocument, mergeAthleteEntries, _private: parserPrivate } = require('./parser');
 const {
   cleanCompetitionTitle,
   getExtension,
@@ -372,7 +372,8 @@ async function buildIndex({ onProgress } = {}) {
     )
   );
 
-  const mergedEntries = mergeAthleteEntries(rawEntries);
+  const individualEntries = rawEntries.filter((entry) => !parserPrivate.resultLooksLikeTeamOrSummary(entry));
+  const mergedEntries = mergeAthleteEntries(individualEntries);
   const athletes = buildAthleteIndex(mergedEntries);
 
   const index = {
