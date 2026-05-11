@@ -133,6 +133,9 @@ test('Saúl Aranda 2026: fallback GOODLIFT DETAILED SCORESHEET parsea fila inver
   assert.deepEqual(entry.attempts.deadlift.map((attempt) => attempt.weight), [235, 245, 260]);
 });
 
+function textLooksLikeTeamPointsForTest(value) {
+  return /\[(?:\s*\d+\s*\+)+\s*\d+\s*\]/.test(String(value || ''));
+}
 
 test('GOODLIFT Sub Junior 2026: el parser dedicado gana aunque el parser genérico encuentre pocas filas', () => {
   const competitionMeta = _private.buildCompetitionMeta({
@@ -161,7 +164,11 @@ test('GOODLIFT Sub Junior 2026: el parser dedicado gana aunque el parser genéri
   const entries = _private.parsePdfText(fixtureText.replace(/\s+/g, ' '), competitionMeta);
   const aranda = entries.find((entry) => entry.athleteName === 'Aranda Sanchez Saul');
 
-  assert.ok(entries.length > 3);
+  assert.ok(entries.length > 3, 'GOODLIFT rows must win over any generic-parser partial rows');
+  assert.equal(
+    entries.some((entry) => textLooksLikeTeamPointsForTest(entry.athleteName) || textLooksLikeTeamPointsForTest(entry.club)),
+    false
+  );
   assert.ok(aranda);
   assert.equal(aranda.athleteName, 'Aranda Sanchez Saul');
   assert.equal(aranda.club, 'ZAB');
