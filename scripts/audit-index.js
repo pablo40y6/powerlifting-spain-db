@@ -71,11 +71,14 @@ function looksLikeClubAthleteName(name) {
   const upper = raw.toUpperCase();
   if (CLUB_WORDS.some((word) => upper.includes(word))) return true;
   if (/\b(SPARTA|IRONSIDE|SOY POWERLIFTER)\b/i.test(raw)) return true;
-  const lettersOnly = raw.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
-  const upperLetters = raw.replace(/[^A-Za-zÁÉÍÓÚÜÑ]/g, '');
+  const lettersOnly = raw.match(/\p{L}/gu)?.join('') || '';
+  const upperLetters = raw.match(/\p{Lu}/gu)?.join('') || '';
   const tokens = raw.split(/\s+/).filter(Boolean);
   const allCaps = lettersOnly.length >= 8 && upperLetters.length === lettersOnly.length;
-  const hasPersonStructure = tokens.length >= 2 && tokens.length <= 5 && tokens.every((token) => /^[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+$/.test(token));
+  const hasPersonStructure = tokens.length >= 2 && tokens.length <= 5 && tokens.every((token) => {
+    const cleaned = token.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    return /\p{L}{2,}/u.test(cleaned) && /^[\p{L}]+(?:[-'’][\p{L}]+)*$/u.test(cleaned);
+  });
   return allCaps && !hasPersonStructure;
 }
 

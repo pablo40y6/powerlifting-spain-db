@@ -67,8 +67,46 @@ test('powerlifting sin sentadilla válida y con IPF GL alto genera warning/error
   assert.ok(types.includes('ipfgl_very_high'));
 });
 
+test('looksLikeClubAthleteName no marca nombres reales con capitalización normal o puntos', () => {
+  const athleteNames = [
+    'Abad Costa. Adrian',
+    'Aranda Sanchez Saul',
+    'Garin Martin Cristian',
+    'Albers Galindo Elisa',
+  ];
+
+  for (const athleteName of athleteNames) {
+    assert.equal(looksLikeClubAthleteName(athleteName), false, athleteName);
+  }
+});
+
+test('looksLikeClubAthleteName no marca nombres reales aunque estén en mayúsculas', () => {
+  const athleteNames = [
+    'ABAD COSTA. ADRIAN',
+    'ARANDA SANCHEZ SAUL',
+    'GARIN MARTIN CRISTIAN',
+    'ALBERS GALINDO ELISA',
+  ];
+
+  for (const athleteName of athleteNames) {
+    assert.equal(looksLikeClubAthleteName(athleteName), false, athleteName);
+  }
+});
+
 test('club/equipo como athleteName se detecta', () => {
-  assert.equal(looksLikeClubAthleteName('POWERLIFTING ALBACETE'), true);
+  const clubNames = [
+    '720 POWERLIFTING Ourense',
+    '84 POWERLIFTING TEAM Malaga',
+    'POWERLIFTING OURENSE',
+    'SPARTA',
+    'IRONSIDE',
+    'SOY POWERLIFTER',
+  ];
+
+  for (const clubName of clubNames) {
+    assert.equal(looksLikeClubAthleteName(clubName), true, clubName);
+  }
+
   const report = auditIndex({ entries: [entry({ athleteName: 'IRONSIDE STRENGTH Madrid' })] });
   const finding = report.findings.find((item) => item.type === 'club_as_athlete');
   assert.ok(finding);
