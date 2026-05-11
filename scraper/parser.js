@@ -2099,6 +2099,14 @@ function parsePdfText(rawText, baseMeta) {
   const metadataSex = meta.sex || sexFromText(`${baseMeta?.resultsLabel || ''} ${baseMeta?.resultsUrl || ''} ${baseMeta?.pageTitle || ''}`);
   let currentSex = metadataSex;
   const goodliftText = isGoodliftPdfText(rawText);
+
+  if (goodliftText) {
+    const goodliftEntries = parseGoodliftDetailedScoresheetLines(lines, competition, metadataSex, category);
+    if (goodliftEntries.length > 0) {
+      return repairEntriesUsingMovementRanks(goodliftEntries);
+    }
+  }
+
   let inGoodliftDetailedScoresheet = !goodliftText;
 
   for (const originalLine of lines) {
@@ -2131,13 +2139,7 @@ function parsePdfText(rawText, baseMeta) {
     if (athlete) entries.push(athlete);
   }
 
-  const repairedEntries = repairEntriesUsingMovementRanks(entries);
-  if (!goodliftText) return repairedEntries;
-
-  const goodliftEntries = parseGoodliftDetailedScoresheetLines(lines, competition, metadataSex, category);
-  if (goodliftEntries.length >= repairedEntries.length) return goodliftEntries;
-
-  return repairedEntries;
+  return repairEntriesUsingMovementRanks(entries);
 }
 
 async function parsePdfDocument(buffer, baseMeta) {
