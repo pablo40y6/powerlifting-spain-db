@@ -142,3 +142,56 @@ test('Aranda regression helper reconoce el caso correcto', () => {
     ipfglIsApprox8692: true,
   });
 });
+
+test('categorías ligeras Junior/Subjunior F -43kg y M -53kg son válidas con peso compatible', () => {
+  assert.equal(expectedCategoryForBodyweight('F', 42.6), '-43kg');
+  assert.equal(expectedCategoryForBodyweight('M', 51.38), '-53kg');
+
+  const report = auditIndex({
+    entries: [
+      entry({
+        athleteName: 'Albers Galindo Elisa',
+        athleteNameNormalized: 'albers galindo elisa',
+        sex: 'F',
+        category: '-43kg',
+        bodyweight: 42.6,
+        competitionName: 'Campeonato de España JÚNIOR',
+      }),
+      entry({
+        athleteName: 'Cartagena Gonzalez Joaquin',
+        athleteNameNormalized: 'cartagena gonzalez joaquin',
+        sex: 'M',
+        category: '-53kg',
+        bodyweight: 51.38,
+        competitionName: 'Campeonato de España JÚNIOR',
+      }),
+    ],
+  });
+
+  const types = findingTypes(report);
+  assert.equal(types.includes('category_invalid'), false);
+  assert.equal(types.includes('category_bodyweight_mismatch'), false);
+});
+
+test('categorías open F -47kg y M -59kg siguen calculándose correctamente', () => {
+  assert.equal(expectedCategoryForBodyweight('F', 44.5), '-47kg');
+  assert.equal(expectedCategoryForBodyweight('M', 58.9), '-59kg');
+
+  const report = auditIndex({
+    entries: [
+      entry({ sex: 'F', category: '-47kg', bodyweight: 44.5, rowKey: 'f47' }),
+      entry({ sex: 'M', category: '-59kg', bodyweight: 58.9, rowKey: 'm59' }),
+    ],
+  });
+
+  const types = findingTypes(report);
+  assert.equal(types.includes('category_invalid'), false);
+  assert.equal(types.includes('category_bodyweight_mismatch'), false);
+});
+
+test('categorías realmente inválidas generan category_invalid', () => {
+  const report = auditIndex({ entries: [entry({ sex: 'F', category: '-45kg', bodyweight: 44.5 })] });
+  const finding = report.findings.find((item) => item.type === 'category_invalid');
+  assert.ok(finding);
+  assert.equal(finding.severity, 'error');
+});

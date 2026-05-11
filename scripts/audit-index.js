@@ -9,8 +9,8 @@ const DEFAULT_REPORT_MD_PATH = path.join(__dirname, '..', 'data', 'audit-report.
 const CURRENT_YEAR = new Date().getUTCFullYear();
 const EPSILON = 0.01;
 
-const MEN_CLASSES = [59, 66, 74, 83, 93, 105, 120, Infinity];
-const WOMEN_CLASSES = [47, 52, 57, 63, 69, 76, 84, Infinity];
+const MEN_CLASSES = [53, 59, 66, 74, 83, 93, 105, 120, Infinity];
+const WOMEN_CLASSES = [43, 47, 52, 57, 63, 69, 76, 84, Infinity];
 const CLUB_WORDS = ['POWERLIFTING', 'BARBELL', 'STRENGTH', 'TEAM', 'CLUB', 'GYM', 'ACADEMY', 'CROSSFIT'];
 const REGRESSION_ATHLETES = [
   'Aranda Sanchez Saul',
@@ -54,9 +54,9 @@ function isKnownCategoryForSex(sex, category) {
   const normalized = normalizeCategory(category);
   if (!normalized) return false;
   const valid = sex === 'F'
-    ? ['-47kg', '-52kg', '-57kg', '-63kg', '-69kg', '-76kg', '-84kg', '+84kg']
+    ? ['-43kg', '-47kg', '-52kg', '-57kg', '-63kg', '-69kg', '-76kg', '-84kg', '+84kg']
     : sex === 'M'
-      ? ['-59kg', '-66kg', '-74kg', '-83kg', '-93kg', '-105kg', '-120kg', '+120kg']
+      ? ['-53kg', '-59kg', '-66kg', '-74kg', '-83kg', '-93kg', '-105kg', '-120kg', '+120kg']
       : [];
   return valid.includes(normalized);
 }
