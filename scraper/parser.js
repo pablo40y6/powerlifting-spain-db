@@ -1025,7 +1025,7 @@ function parseExcelDocument(buffer, baseMeta) {
       // el numero positivo. Para no depender de que SheetJS conserve estilos,
       // reconstruimos los nulos comparando los intentos con el total oficial.
       if (currentLayout.liftType === 'powerlifting') {
-        attempts = repairAttemptsUsingReportedTotal(attempts, reportedTotal, currentLayout.liftType);
+        attempts = repairAttemptsUsingReportedTotal(attempts, reportedTotal);
       } else if (['squat', 'bench', 'deadlift'].includes(currentLayout.liftType)) {
         attempts = repairSingleLiftAttemptsUsingReportedTotal(
           attempts,
@@ -1171,39 +1171,7 @@ function compareReportedTotalRepairCandidates(a, b) {
   return 0;
 }
 
-function numericAttemptWeightsForReportedTotalRepair(group) {
-  const values = [];
-  for (const attempt of group || []) {
-    if (!attempt || attempt.weight === null || attempt.weight === undefined) continue;
-    if (attempt.good === false) continue;
-    values.push(attempt.weight);
-  }
-  return [...new Set(values)].sort((a, b) => a - b);
-}
-
-function attemptClearlyFailed(attempt) {
-  if (!attempt) return false;
-  if (attempt.good === false) return true;
-  return typeof attempt.raw === 'string' && /^\s*-/.test(attempt.raw);
-}
-
-function cloneAttemptForReportedTotalPlan(attempt, good) {
-  if (!attempt || attempt.weight === null || attempt.weight === undefined) {
-    return { raw: null, weight: null, good: null };
-  }
-  if (attemptClearlyFailed(attempt)) return attempt;
-  if (attempt.good === good) return attempt;
-
-  return {
-    ...attempt,
-    raw: good === false ? `-${attempt.weight}` : String(attempt.weight),
-    good,
-  };
-}
-
-function repairAttemptsUsingReportedTotal(attempts, reportedTotal, eventType = 'powerlifting') {
-  if ((eventType || 'powerlifting') !== 'powerlifting') return attempts;
-
+function repairAttemptsUsingReportedTotal(attempts, reportedTotal) {
   const groups = {
     squat: attempts.squat || [],
     bench: attempts.bench || [],
@@ -1212,14 +1180,24 @@ function repairAttemptsUsingReportedTotal(attempts, reportedTotal, eventType = '
   const allGroups = [groups.squat, groups.bench, groups.deadlift];
 
   if (reportedTotal === null || reportedTotal === undefined) return attempts;
-  if (!Number.isFinite(Number(reportedTotal))) return attempts;
   if (!allGroups.every(movementHasNumericAttempt)) return attempts;
 
   const currentTotal = allGroups.reduce((sum, group) => sum + bestSuccessfulWeight(group), 0);
   if (Math.abs(currentTotal - reportedTotal) < 0.26) return attempts;
 
-  const candidateWeights = allGroups.map(numericAttemptWeightsForReportedTotalRepair);
-  if (!candidateWeights.every((values) => values.length > 0)) return attempts;
+  // Be conservative: this fallback only reconstructs visually hidden failed
+  // attempts when all currently-successful best attempts add up to more than the
+  // official total. If the parsed total is lower, a missing good attempt would
+  // require inventing data rather than marking hidden failures.
+  if (currentTotal <= reportedTotal + 0.26) return attempts;
+
+  const candidateWeights = allGroups.map((group) => {
+    const values = [...new Set(group
+      .filter((attempt) => attempt && attempt.weight !== null && attempt.weight !== undefined)
+      .map((attempt) => attempt.weight))];
+    values.sort((a, b) => a - b);
+    return values;
+  });
 
   const candidates = [];
   for (const squatBest of candidateWeights[0]) {
@@ -1240,19 +1218,37 @@ function repairAttemptsUsingReportedTotal(attempts, reportedTotal, eventType = '
           continue;
         }
 
-        candidates.push({ squatBest, benchBest, deadBest, squatPlan, benchPlan, deadPlan });
+        const candidate = {
+          groups,
+          squatBest,
+          benchBest,
+          deadBest,
+          squatPlan,
+          benchPlan,
+          deadPlan,
+        };
+        candidate.score = planScoreForReportedTotalRepair(candidate);
+        candidates.push(candidate);
       }
     }
   }
 
-  if (candidates.length !== 1) return attempts;
+  if (!candidates.length) return attempts;
 
-  const [best] = candidates;
+  candidates.sort(compareReportedTotalRepairCandidates);
+  const best = candidates[0];
+  const tiedBest = candidates.filter((candidate) => compareReportedTotalRepairCandidates(candidate, best) === 0);
+
+  // If two readings are equally plausible after exact-total matching and the
+  // conservative tie-breakers above, keep the parsed attempts rather than
+  // fabricating hidden failures.
+  if (tiedBest.length > 1) return attempts;
+
   return {
     ...attempts,
-    squat: groups.squat.map((attempt, index) => cloneAttemptForReportedTotalPlan(attempt, best.squatPlan.statuses[index])),
-    bench: groups.bench.map((attempt, index) => cloneAttemptForReportedTotalPlan(attempt, best.benchPlan.statuses[index])),
-    deadlift: groups.deadlift.map((attempt, index) => cloneAttemptForReportedTotalPlan(attempt, best.deadPlan.statuses[index])),
+    squat: groups.squat.map((attempt, index) => cloneAttemptWithGood(attempt, best.squatPlan.statuses[index])),
+    bench: groups.bench.map((attempt, index) => cloneAttemptWithGood(attempt, best.benchPlan.statuses[index])),
+    deadlift: groups.deadlift.map((attempt, index) => cloneAttemptWithGood(attempt, best.deadPlan.statuses[index])),
   };
 }
 
