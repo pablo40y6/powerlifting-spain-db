@@ -313,3 +313,77 @@ test('debug totalAttemptSumMismatch agrega conteos, diffs, grupos y ejemplos lim
   assert.equal(firstGroup.examples[0].parsedBestAttemptSum, 660);
   assert.equal(firstGroup.examples[0].diff, 10);
 });
+
+
+test('debug totalAttemptSumMismatch incluye findings completos y resumen agregado', () => {
+  const report = auditIndex({
+    entries: [entry({
+      rowKey: 'debug-full',
+      athleteName: 'Atleta Debug',
+      resultsUrl: 'https://example.com/full.pdf',
+      resultsLabel: 'Resultados Full',
+      competitionName: 'Open Debug 2025',
+      competitionYear: 2025,
+      total: 650,
+      labels: ['Open'],
+      sourceFile: 'full.xlsx',
+      resultSheetName: 'Resultados',
+    })],
+  });
+
+  const debug = report.debug.totalAttemptSumMismatch;
+  assert.equal(debug.summary.count, 1);
+  assert.deepEqual(debug.summary.resultsUrlDistribution, { 'https://example.com/full.pdf': 1 });
+  assert.deepEqual(debug.summary.topResultsUrls, [{ resultsUrl: 'https://example.com/full.pdf', count: 1 }]);
+  assert.deepEqual(debug.summary.competitionDistribution, { 'Open Debug 2025 | 2025': 1 });
+  assert.equal(debug.findings.length, 1);
+  assert.deepEqual(debug.findings[0], {
+    athleteName: 'Atleta Debug',
+    competitionName: 'Open Debug 2025',
+    rowKey: 'debug-full',
+    sex: 'M',
+    category: '-93kg',
+    bodyweight: 91.7,
+    officialTotal: 650,
+    parsedBestAttemptSum: 660,
+    diff: 10,
+    liftType: null,
+    eventType: 'powerlifting',
+    isRankable: true,
+    hasValidPowerliftingTotal: true,
+    attempts: {
+      squat: [{ weight: 250, good: true }],
+      bench: [{ weight: 150, good: true }],
+      deadlift: [{ weight: 260, good: true }],
+    },
+    labels: {
+      labels: ['Open'],
+      resultLabels: null,
+      resultsLabel: 'Resultados Full',
+      ageClass: null,
+      division: null,
+      equipment: null,
+      club: null,
+    },
+    resultsUrl: 'https://example.com/full.pdf',
+    resultsLabel: 'Resultados Full',
+    competitionYear: 2025,
+    sourceMetadata: {
+      meetPageUrl: 'https://powerliftingspain.es/open-test-2026/',
+      resultsUrl: 'https://example.com/full.pdf',
+      rowKey: 'debug-full',
+      sourceFile: 'full.xlsx',
+      resultSheetName: 'Resultados',
+    },
+    resultMetadata: {
+      competitionName: 'Open Debug 2025',
+      competitionYear: 2025,
+      competitionDate: '2026-01-01',
+      meetPageUrl: 'https://powerliftingspain.es/open-test-2026/',
+      resultsUrl: 'https://example.com/full.pdf',
+      isIndividualResult: true,
+      resultsLabel: 'Resultados Full',
+      resultSheetName: 'Resultados',
+    },
+  });
+});
