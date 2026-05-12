@@ -505,7 +505,7 @@ function goodAttemptForTest(weight) {
   return { raw: String(weight), weight, good: true };
 }
 
-test('repara intentos nulos ocultos por estilo en XLS antiguo: Abad Gonzalez Teo', () => {
+test('no repara intento oculto si el total oficial admite varias combinaciones: Abad Gonzalez Teo', () => {
   const attempts = {
     squat: [165, 175, 182.5].map(goodAttemptForTest),
     bench: [105, 110, 115].map(goodAttemptForTest),
@@ -514,13 +514,11 @@ test('repara intentos nulos ocultos por estilo en XLS antiguo: Abad Gonzalez Teo
 
   const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 502.5);
 
-  assert.equal(computedPowerliftingTotalForTest(repaired), 502.5);
-  assert.equal(repaired.squat[2].good, true);
-  assert.equal(repaired.bench[2].good, true);
-  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, false, false]);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 510);
+  assert.deepEqual(repaired, attempts);
 });
 
-test('repara intentos nulos ocultos por estilo en XLS antiguo: Abarquero Diezhandino Ester', () => {
+test('no repara intento oculto si el total oficial admite varias combinaciones: Abarquero Diezhandino Ester', () => {
   const attempts = {
     squat: [110, 117.5, 125].map(goodAttemptForTest),
     bench: [62.5, 67.5, 72.5].map(goodAttemptForTest),
@@ -530,18 +528,80 @@ test('repara intentos nulos ocultos por estilo en XLS antiguo: Abarquero Diezhan
   const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 332.5);
 
   assert.equal(computedPowerliftingTotalForTest(attempts), 347.5);
-  assert.equal(computedPowerliftingTotalForTest(repaired), 332.5);
-  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, false, false]);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 347.5);
+  assert.deepEqual(repaired, attempts);
 });
 
-test('no inventa nulos si ningun combo de intentos existentes coincide con el total oficial', () => {
+
+test('reconciliación conservadora única: Aliste Sanchez Noelia cuadra a 314', () => {
+  const attempts = {
+    squat: [102.5, 110, 120].map(goodAttemptForTest),
+    bench: [57.5, 64, 76].map(goodAttemptForTest),
+    deadlift: [127.5, 135, 140].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 314, 'powerlifting');
+
+  assert.equal(computedPowerliftingTotalForTest(attempts), 336);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 314);
+  assert.deepEqual(repaired.squat.map((attempt) => attempt.good), [true, true, false]);
+  assert.deepEqual(repaired.bench.map((attempt) => attempt.good), [true, true, false]);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, true, true]);
+});
+
+test('reconciliación conservadora única: Andrade Caamaño Angel cuadra a 660', () => {
+  const attempts = {
+    squat: [230, 245, 285].map(goodAttemptForTest),
+    bench: [125, 130, 135].map(goodAttemptForTest),
+    deadlift: [260, 270, 280].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 660, 'powerlifting');
+
+  assert.equal(computedPowerliftingTotalForTest(attempts), 700);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 660);
+  assert.deepEqual(repaired.squat.map((attempt) => attempt.good), [true, true, false]);
+  assert.deepEqual(repaired.bench.map((attempt) => attempt.good), [true, true, true]);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, true, true]);
+});
+
+test('reconciliación conservadora única: Bancalero Carretero Manuel cuadra a 555', () => {
+  const attempts = {
+    squat: [180, 190, 195].map(goodAttemptForTest),
+    bench: [112.5, 117.5, 125].map(goodAttemptForTest),
+    deadlift: [220, 230, 240].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 555, 'powerlifting');
+
+  assert.equal(computedPowerliftingTotalForTest(attempts), 560);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 555);
+  assert.deepEqual(repaired.squat.map((attempt) => attempt.good), [true, true, false]);
+  assert.deepEqual(repaired.bench.map((attempt) => attempt.good), [true, true, true]);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, true, true]);
+});
+
+test('reconciliación conservadora: Aguirre Quesada Asier ambiguo no se modifica', () => {
+  const attempts = {
+    squat: [100, 110, 120].map(goodAttemptForTest),
+    bench: [50, 60, 70].map(goodAttemptForTest),
+    deadlift: [130, 140, 150].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 310, 'powerlifting');
+
+  assert.equal(computedPowerliftingTotalForTest(repaired), 340);
+  assert.deepEqual(repaired, attempts);
+});
+
+test('reconciliación conservadora: sin combinación exacta no se modifica', () => {
   const attempts = {
     squat: [100, 110, 120].map(goodAttemptForTest),
     bench: [70, 75, 80].map(goodAttemptForTest),
     deadlift: [130, 140, 150].map(goodAttemptForTest),
   };
 
-  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 333);
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 333, 'powerlifting');
 
   assert.equal(computedPowerliftingTotalForTest(repaired), 350);
   assert.deepEqual(repaired, attempts);
