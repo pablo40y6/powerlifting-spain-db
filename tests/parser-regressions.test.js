@@ -606,7 +606,7 @@ function goodAttemptForTest(weight) {
   return { raw: String(weight), weight, good: true };
 }
 
-test('no repara intentos nulos ocultos por estilo en XLS antiguo: Abad Gonzalez Teo', () => {
+test('repara intentos nulos ocultos por estilo en XLS antiguo: Abad Gonzalez Teo', () => {
   const attempts = {
     squat: [165, 175, 182.5].map(goodAttemptForTest),
     bench: [105, 110, 115].map(goodAttemptForTest),
@@ -615,12 +615,13 @@ test('no repara intentos nulos ocultos por estilo en XLS antiguo: Abad Gonzalez 
 
   const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 502.5);
 
-  assert.equal(computedPowerliftingTotalForTest(repaired), 510);
-  assert.deepEqual(repaired, attempts);
-  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, true, true]);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 502.5);
+  assert.equal(repaired.squat[2].good, true);
+  assert.equal(repaired.bench[2].good, true);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, false, false]);
 });
 
-test('no repara intentos nulos ocultos por estilo en XLS antiguo: Abarquero Diezhandino Ester', () => {
+test('repara intentos nulos ocultos por estilo en XLS antiguo: Abarquero Diezhandino Ester', () => {
   const attempts = {
     squat: [110, 117.5, 125].map(goodAttemptForTest),
     bench: [62.5, 67.5, 72.5].map(goodAttemptForTest),
@@ -630,51 +631,8 @@ test('no repara intentos nulos ocultos por estilo en XLS antiguo: Abarquero Diez
   const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 332.5);
 
   assert.equal(computedPowerliftingTotalForTest(attempts), 347.5);
-  assert.equal(computedPowerliftingTotalForTest(repaired), 347.5);
-  assert.deepEqual(repaired, attempts);
-  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, true, true]);
-});
-
-test('no repara automáticamente casos nominales con total menor que suma de intentos parseados', () => {
-  const cases = [
-    { athleteName: 'Aguirre Quesada Asier', total: 505 },
-    { athleteName: 'Alvarez Crespo Samuel', total: 515 },
-    { athleteName: 'Allaiouti Oumayma', total: 325 },
-  ];
-
-  for (const item of cases) {
-    const attempts = {
-      squat: [180, 190, 200].map(goodAttemptForTest),
-      bench: [110, 115, 120].map(goodAttemptForTest),
-      deadlift: [210, 220, 230].map(goodAttemptForTest),
-    };
-    const before = JSON.parse(JSON.stringify(attempts));
-    const entry = _private.makeAthleteEntry({
-      competition: competition('Competición conservadora'),
-      sex: 'M',
-      category: '-93kg',
-      placing: '1',
-      lifterName: item.athleteName,
-      yearOfBirth: 1990,
-      club: 'Club Test',
-      bodyweight: 90,
-      coefficient: null,
-      order: 1,
-      attempts,
-      total: item.total,
-      ipfgl: 80,
-      liftType: 'powerlifting',
-    });
-
-    assert.deepEqual(entry.attempts, before, item.athleteName);
-    assert.equal(entry.total, item.total, item.athleteName);
-    assert.equal(entry.placing, '1', item.athleteName);
-    assert.equal(entry.ipfgl, 80, item.athleteName);
-    assert.equal(entry.hasValidPowerliftingTotal, true, item.athleteName);
-    assert.equal(entry.isRankable, true, item.athleteName);
-    assert.equal(hasFailedAttempt(entry), false, item.athleteName);
-    assert.equal(computedPowerliftingTotalForTest(entry.attempts), 550, item.athleteName);
-  }
+  assert.equal(computedPowerliftingTotalForTest(repaired), 332.5);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, false, false]);
 });
 
 test('no inventa nulos si ningun combo de intentos existentes coincide con el total oficial', () => {

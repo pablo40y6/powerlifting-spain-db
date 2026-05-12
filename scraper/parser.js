@@ -1083,10 +1083,19 @@ function parseExcelDocument(buffer, baseMeta) {
       const movementRanks = movementRanksFromExcelRow(row, currentLayout);
       let attempts = attemptsObjectFromExcelRow(row, currentLayout, cells, workbook, legacyFailMap, rowData.excelRowIndex);
 
-      void reportedTotal;
-      // Conservador: no reconstruimos nulos comparando con el total oficial.
-      // Solo el parser de cada celda/documento puede marcar good:false cuando
-      // existe una señal explícita de fallo (negativo, X, nulo/estilo soportado).
+      // Algunos Excel antiguos de AEP no guardan los nulos con signo negativo:
+      // visualmente aparecen en rojo/tachado, pero al extraer el valor solo queda
+      // el numero positivo. Para no depender de que SheetJS conserve estilos,
+      // reconstruimos los nulos comparando los intentos con el total oficial.
+      if (currentLayout.liftType === 'powerlifting') {
+        attempts = repairAttemptsUsingReportedTotal(attempts, reportedTotal);
+      } else if (['squat', 'bench', 'deadlift'].includes(currentLayout.liftType)) {
+        attempts = repairSingleLiftAttemptsUsingReportedTotal(
+          attempts,
+          currentLayout.liftType,
+          reportedTotal
+        );
+      }
 
       const entry = makeAthleteEntry({
         competition,
@@ -1226,17 +1235,123 @@ function compareReportedTotalRepairCandidates(a, b) {
 }
 
 function repairAttemptsUsingReportedTotal(attempts, reportedTotal) {
-  void reportedTotal;
-  // Conservador: no inferimos intentos fallidos por búsqueda combinatoria contra
-  // el total oficial. Los descuadres quedan para la auditoría como warnings.
-  return attempts;
+  const groups = {
+    squat: attempts.squat || [],
+    bench: attempts.bench || [],
+    deadlift: attempts.deadlift || [],
+  };
+  const allGroups = [groups.squat, groups.bench, groups.deadlift];
+
+  if (reportedTotal === null || reportedTotal === undefined) return attempts;
+  if (!allGroups.every(movementHasNumericAttempt)) return attempts;
+
+  const currentTotal = allGroups.reduce((sum, group) => sum + bestSuccessfulWeight(group), 0);
+  if (Math.abs(currentTotal - reportedTotal) < 0.26) return attempts;
+
+  // Be conservative: this fallback only reconstructs visually hidden failed
+  // attempts when all currently-successful best attempts add up to more than the
+  // official total. If the parsed total is lower, a missing good attempt would
+  // require inventing data rather than marking hidden failures.
+  if (currentTotal <= reportedTotal + 0.26) return attempts;
+
+  const candidateWeights = allGroups.map((group) => {
+    const values = [...new Set(group
+      .filter((attempt) => attempt && attempt.weight !== null && attempt.weight !== undefined)
+      .map((attempt) => attempt.weight))];
+    values.sort((a, b) => a - b);
+    return values;
+  });
+
+  const candidates = [];
+  for (const squatBest of candidateWeights[0]) {
+    for (const benchBest of candidateWeights[1]) {
+      for (const deadBest of candidateWeights[2]) {
+        const candidateTotal = squatBest + benchBest + deadBest;
+        if (Math.abs(candidateTotal - reportedTotal) >= 0.26) continue;
+
+        const squatPlan = inferStatusesForGroup(groups.squat, squatBest);
+        const benchPlan = inferStatusesForGroup(groups.bench, benchBest);
+        const deadPlan = inferStatusesForGroup(groups.deadlift, deadBest);
+        if (!squatPlan || !benchPlan || !deadPlan) continue;
+        if (
+          !planRespectsKnownFailures(groups.squat, squatPlan) ||
+          !planRespectsKnownFailures(groups.bench, benchPlan) ||
+          !planRespectsKnownFailures(groups.deadlift, deadPlan)
+        ) {
+          continue;
+        }
+
+        const candidate = {
+          groups,
+          squatBest,
+          benchBest,
+          deadBest,
+          squatPlan,
+          benchPlan,
+          deadPlan,
+        };
+        candidate.score = planScoreForReportedTotalRepair(candidate);
+        candidates.push(candidate);
+      }
+    }
+  }
+
+  if (!candidates.length) return attempts;
+
+  candidates.sort(compareReportedTotalRepairCandidates);
+  const best = candidates[0];
+  const tiedBest = candidates.filter((candidate) => compareReportedTotalRepairCandidates(candidate, best) === 0);
+
+  // If two readings are equally plausible after exact-total matching and the
+  // conservative tie-breakers above, keep the parsed attempts rather than
+  // fabricating hidden failures.
+  if (tiedBest.length > 1) return attempts;
+
+  return {
+    ...attempts,
+    squat: groups.squat.map((attempt, index) => cloneAttemptWithGood(attempt, best.squatPlan.statuses[index])),
+    bench: groups.bench.map((attempt, index) => cloneAttemptWithGood(attempt, best.benchPlan.statuses[index])),
+    deadlift: groups.deadlift.map((attempt, index) => cloneAttemptWithGood(attempt, best.deadPlan.statuses[index])),
+  };
 }
 
 function repairSingleLiftAttemptsUsingReportedTotal(attempts, liftType, reportedTotal) {
-  void liftType;
-  void reportedTotal;
-  // Conservador: no fabricamos fallos en movimientos únicos a partir del total.
-  return attempts;
+  const movementKey = liftType === 'bench'
+    ? 'bench'
+    : liftType === 'deadlift'
+      ? 'deadlift'
+      : liftType === 'squat'
+        ? 'squat'
+        : null;
+
+  if (!movementKey) return attempts;
+  if (reportedTotal === null || reportedTotal === undefined) return attempts;
+
+  const group = attempts[movementKey] || [];
+  if (group.length !== 3) return attempts;
+  if (group.some((attempt) => !attempt || attempt.weight === null)) return attempts;
+
+  // Si ya hay algun nulo real detectado por signo negativo o estilo convertido,
+  // no sobreescribimos la informacion original.
+  if (group.some((attempt) => attempt.good === false || attempt.good === null)) return attempts;
+
+  const currentBest = bestSuccessfulWeight(group);
+  if (Math.abs(currentBest - reportedTotal) < 0.26) return attempts;
+
+  if (Math.abs(reportedTotal) < 0.26) {
+    return {
+      ...attempts,
+      [movementKey]: group.map((attempt) => cloneAttemptWithGood(attempt, false)),
+    };
+  }
+
+  const plan = inferStatusesForGroup(group, reportedTotal);
+  if (!plan) return attempts;
+
+  return {
+    ...attempts,
+    [movementKey]: group.map((attempt, index) => cloneAttemptWithGood(attempt, plan.statuses[index])),
+  };
 }
 
 function hasTrustedFailureInfo(group) {
@@ -1347,8 +1462,35 @@ function applyBestComboToAttempts(attempts, combo) {
 }
 
 function repairEntriesUsingMovementRanks(entries) {
-  // Conservador: los rankings por movimiento pueden ayudar a auditar, pero no
-  // deben cambiar estados de intentos ni inferir fallos combinando contra total.
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!entry || entry.liftType !== 'powerlifting') continue;
+    if (!entry.movementRanks || !Object.keys(entry.movementRanks).length) continue;
+
+    const key = [
+      entry.competition?.meetPageUrl || normalizeName(entry.competition?.name || ''),
+      entry.competition?.date || '',
+      entry.sex || '',
+      entry.category || '',
+    ].join('::');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+
+  for (const groupEntries of groups.values()) {
+    for (const entry of groupEntries) {
+      const currentFailed = failedAttemptsCount(entry);
+      const currentMatches = attemptsMatchReportedTotal(entry);
+      if (currentFailed > 0 && currentMatches) continue;
+
+      const combos = rankFilteredBestCombinations(entry, groupEntries);
+      const signatures = [...new Set(combos.map(comboSignature))];
+      if (signatures.length !== 1) continue;
+
+      entry.attempts = applyBestComboToAttempts(entry.attempts, combos[0]);
+    }
+  }
+
   return entries;
 }
 
@@ -2132,7 +2274,7 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
 
   const attempts = isSingleLift
     ? attemptsObjectForLiftType(rebuiltAttemptTokens, liftType)
-    : attemptsObjectFromList(rebuiltAttemptTokens);
+    : repairAttemptsUsingReportedTotal(attemptsObjectFromList(rebuiltAttemptTokens), total);
 
   return makeAthleteEntry({
     competition,
@@ -2221,7 +2363,7 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
 
   const attempts = isSingleLift
     ? attemptsObjectForLiftType(rebuiltAttemptTokens, liftType)
-    : attemptsObjectFromList(rebuiltAttemptTokens);
+    : repairAttemptsUsingReportedTotal(attemptsObjectFromList(rebuiltAttemptTokens), total);
 
   return makeAthleteEntry({
     competition,

@@ -179,12 +179,9 @@ function makeFinding(entry, severity, type, message, extras = {}) {
     athleteName: entry?.athleteName || null,
     competitionName: entry?.competitionName || null,
     competitionYear: entry?.competitionYear ?? null,
-    resultsUrl: entry?.resultsUrl || null,
-    resultsLabel: entry?.resultsLabel || null,
     message,
     value: extras.value ?? null,
     expected: extras.expected ?? null,
-    diff: extras.diff ?? null,
     rowKey: entry?.rowKey || null,
   };
 }
@@ -265,12 +262,7 @@ function auditTotals(entry) {
     if (eventType === 'powerlifting' && hasValidPowerliftingTotalFromAttempts(entry)) {
       const computed = computedPowerliftingTotal(entry);
       if (Math.abs(total - computed) > EPSILON) {
-        const diff = Number((computed - total).toFixed(2));
-        if (total < computed) {
-          findings.push(makeFinding(entry, 'warning', 'suspected_missing_failed_attempt_marker', 'El total oficial es menor que la suma de mejores intentos parseados; posible intento fallido sin marcador explícito en origen.', { value: total, expected: computed, diff }));
-        } else {
-          findings.push(makeFinding(entry, 'warning', 'total_attempt_sum_mismatch', 'El total no coincide con la suma de mejores intentos válidos.', { value: total, expected: computed, diff }));
-        }
+        findings.push(makeFinding(entry, 'warning', 'total_attempt_sum_mismatch', 'El total no coincide con la suma de mejores intentos válidos.', { value: total, expected: computed }));
       }
     } else if (['squat', 'bench', 'deadlift'].includes(eventType)) {
       const computed = computedSingleLiftTotal(entry);
@@ -424,60 +416,6 @@ function buildRegressionSection(entries) {
   };
 }
 
-
-function incrementAggregate(map, key, sample) {
-  if (!map.has(key)) {
-    map.set(key, { ...sample, count: 0 });
-  }
-  map.get(key).count += 1;
-}
-
-function buildTotalMismatchDebug(findings) {
-  const mismatchTypes = new Set(['total_attempt_sum_mismatch', 'suspected_missing_failed_attempt_marker']);
-  const bySource = new Map();
-  const byDiff = new Map();
-
-  for (const finding of findings) {
-    if (!mismatchTypes.has(finding.type)) continue;
-    const diff = finding.diff ?? (
-      toNumber(finding.expected) !== null && toNumber(finding.value) !== null
-        ? Number((toNumber(finding.expected) - toNumber(finding.value)).toFixed(2))
-        : null
-    );
-    const sourceKey = [
-      finding.resultsUrl || 'sin resultsUrl',
-      finding.resultsLabel || 'sin resultsLabel',
-      finding.competitionYear ?? 'sin competitionYear',
-      finding.type,
-    ].join('::');
-    incrementAggregate(bySource, sourceKey, {
-      resultsUrl: finding.resultsUrl || null,
-      resultsLabel: finding.resultsLabel || null,
-      competitionYear: finding.competitionYear ?? null,
-      type: finding.type,
-    });
-    const diffKey = [finding.type, diff === null ? 'sin diff' : String(diff)].join('::');
-    incrementAggregate(byDiff, diffKey, {
-      type: finding.type,
-      diff,
-    });
-  }
-
-  const sortAggregates = (items) => [...items].sort((a, b) =>
-    b.count - a.count ||
-    String(a.type).localeCompare(String(b.type)) ||
-    String(a.diff ?? '').localeCompare(String(b.diff ?? '')) ||
-    String(a.resultsUrl ?? '').localeCompare(String(b.resultsUrl ?? ''))
-  );
-
-  return {
-    totalAttemptMismatches: {
-      bySource: sortAggregates(bySource.values()),
-      byDiff: sortAggregates(byDiff.values()),
-    },
-  };
-}
-
 function auditIndex(index, options = {}) {
   const entries = flattenEntries(index);
   const findings = [];
@@ -514,7 +452,6 @@ function auditIndex(index, options = {}) {
       byType,
     },
     regression: buildRegressionSection(entries),
-    debug: buildTotalMismatchDebug(findings),
     findings,
   };
 }
@@ -550,15 +487,6 @@ function renderMarkdown(report) {
   for (const athlete of report.regression.athletes) lines.push(`- ${athlete.athleteName}: ${athlete.count}`);
   lines.push(`- Aranda 2026 encontrado: ${report.regression.aranda.has2026Result ? 'sí' : 'no'}`);
   for (const [check, ok] of Object.entries(report.regression.aranda.checks || {})) lines.push(`  - ${check}: ${ok ? 'OK' : 'REVISAR'}`);
-  lines.push('', '## Debug: descuadres de total vs intentos', '');
-  lines.push('### Por resultsUrl / resultsLabel / competitionYear', '');
-  for (const item of report.debug.totalAttemptMismatches.bySource) {
-    lines.push(`- ${item.type}: ${item.count} · ${item.resultsLabel || 'sin resultsLabel'} · ${item.competitionYear ?? 'sin competitionYear'} · ${item.resultsUrl || 'sin resultsUrl'}`);
-  }
-  lines.push('', '### Por diff (suma intentos - total oficial)', '');
-  for (const item of report.debug.totalAttemptMismatches.byDiff) {
-    lines.push(`- ${item.type}: diff ${item.diff ?? 'sin diff'} · ${item.count}`);
-  }
   lines.push('', '## Top 20 problemas', '');
   for (const finding of topFindings(report.findings)) {
     lines.push(`- **${finding.severity.toUpperCase()}** ${finding.type}: ${finding.message} (${finding.athleteName || 'sin atleta'} · ${finding.competitionName || 'sin competición'} · ${finding.rowKey || 'sin rowKey'})`);
