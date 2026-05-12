@@ -234,3 +234,103 @@ test('category_bodyweight_mismatch mantiene warnings para categorías demasiado 
   assert.equal(byRowKey.get('m53-extreme-low')?.expected, '-120kg');
   assert.equal(byRowKey.get('m120-extreme-high')?.expected, '-83kg');
 });
+
+test('total oficial menor que la suma de intentos se reclasifica como suspected_missing_failed_attempt_marker', () => {
+  const report = auditIndex({
+    entries: [entry({
+      athleteName: 'Aguirre Quesada Asier',
+      athleteNameNormalized: 'aguirre quesada asier',
+      resultsLabel: 'Resultados conservadores',
+      resultsUrl: 'https://powerliftingspain.es/wp-content/uploads/2026/01/conservador.pdf',
+      total: 640,
+      ipfgl: 86.92,
+      placing: '1',
+      hasValidPowerliftingTotal: true,
+      isRankable: true,
+      attempts: {
+        squat: [{ raw: '250', weight: 250, good: true }],
+        bench: [{ raw: '150', weight: 150, good: true }],
+        deadlift: [{ raw: '260', weight: 260, good: true }],
+      },
+    })],
+  });
+
+  const suspected = report.findings.find((item) => item.type === 'suspected_missing_failed_attempt_marker');
+  assert.ok(suspected);
+  assert.equal(suspected.severity, 'warning');
+  assert.equal(suspected.value, 640);
+  assert.equal(suspected.expected, 660);
+  assert.equal(suspected.diff, 20);
+  assert.equal(report.findings.some((item) => item.type === 'total_attempt_sum_mismatch'), false);
+  assert.deepEqual(report.debug.totalAttemptMismatches.byDiff, [
+    { type: 'suspected_missing_failed_attempt_marker', diff: 20, count: 1 },
+  ]);
+  assert.deepEqual(report.debug.totalAttemptMismatches.bySource, [
+    {
+      resultsUrl: 'https://powerliftingspain.es/wp-content/uploads/2026/01/conservador.pdf',
+      resultsLabel: 'Resultados conservadores',
+      competitionYear: 2026,
+      type: 'suspected_missing_failed_attempt_marker',
+      count: 1,
+    },
+  ]);
+});
+
+test('casos nominales no son reparados ni degradados por auditoría conservadora', () => {
+  const cases = [
+    { athleteName: 'Aguirre Quesada Asier', total: 640, rowKey: 'aguirre' },
+    { athleteName: 'Alvarez Crespo Samuel', total: 635, rowKey: 'alvarez' },
+    { athleteName: 'Allaiouti Oumayma', total: 625, rowKey: 'allaiouti' },
+  ];
+  const entries = cases.map((item) => entry({
+    athleteName: item.athleteName,
+    athleteNameNormalized: item.athleteName.toLowerCase(),
+    rowKey: item.rowKey,
+    total: item.total,
+    ipfgl: 80,
+    placing: '2',
+    isRankable: true,
+    hasValidPowerliftingTotal: true,
+    attempts: {
+      squat: [{ raw: '250', weight: 250, good: true }],
+      bench: [{ raw: '150', weight: 150, good: true }],
+      deadlift: [{ raw: '260', weight: 260, good: true }],
+    },
+  }));
+  const before = JSON.parse(JSON.stringify(entries));
+
+  const report = auditIndex({ entries });
+
+  assert.deepEqual(entries, before);
+  for (const item of cases) {
+    const audited = entries.find((candidate) => candidate.rowKey === item.rowKey);
+    assert.equal(audited.total, item.total, item.athleteName);
+    assert.equal(audited.ipfgl, 80, item.athleteName);
+    assert.equal(audited.placing, '2', item.athleteName);
+    assert.equal(audited.isRankable, true, item.athleteName);
+    assert.equal(audited.hasValidPowerliftingTotal, true, item.athleteName);
+    assert.equal(audited.attempts.deadlift[0].good, true, item.athleteName);
+    assert.equal(report.findings.some((finding) => finding.rowKey === item.rowKey && finding.type === 'suspected_missing_failed_attempt_marker'), true, item.athleteName);
+    assert.equal(report.findings.some((finding) => finding.rowKey === item.rowKey && finding.type === 'total_attempt_sum_mismatch'), false, item.athleteName);
+  }
+});
+
+test('total oficial mayor que la suma conserva total_attempt_sum_mismatch', () => {
+  const report = auditIndex({
+    entries: [entry({
+      rowKey: 'official-greater',
+      total: 680,
+      attempts: {
+        squat: [{ raw: '250', weight: 250, good: true }],
+        bench: [{ raw: '150', weight: 150, good: true }],
+        deadlift: [{ raw: '260', weight: 260, good: true }],
+      },
+    })],
+  });
+
+  const mismatch = report.findings.find((item) => item.type === 'total_attempt_sum_mismatch');
+  assert.ok(mismatch);
+  assert.equal(mismatch.severity, 'warning');
+  assert.equal(mismatch.diff, -20);
+  assert.equal(report.findings.some((item) => item.type === 'suspected_missing_failed_attempt_marker'), false);
+});
