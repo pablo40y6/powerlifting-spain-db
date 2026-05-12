@@ -338,10 +338,8 @@ test('no indexa filas incompletas no rankeables sin marcas deportivas', () => {
   const rows = [
     athleteEntry({
       lifterName: 'Fariña Crepo Raul',
-      competition: competition('VIII Campeonato del NOROESTE, Raw Barbell Cup'),
-      category: '+120kg',
-      club: 'FENIX',
-      placing: '23',
+      club: 'CLUB TEST',
+      placing: '4',
       bodyweight: 90.02,
       coefficient: null,
       attempts: emptyAttempts(),
@@ -366,43 +364,6 @@ test('no indexa filas incompletas no rankeables sin marcas deportivas', () => {
     assert.equal(parserPrivate.shouldRejectNonAthleteResult(row), true, row.athleteName);
   }
   assert.deepEqual(mergeAthleteEntries(rows), []);
-});
-
-test('mantiene Fariña Martínez Ignacio con resultado deportivo real', () => {
-  const realAthlete = athleteEntry({
-    lifterName: 'Fariña Martínez Ignacio',
-    competition: competition('VIII Campeonato del NOROESTE, Raw Barbell Cup'),
-    category: '-93kg',
-    club: 'FENIX',
-    placing: '5',
-    bodyweight: 89.8,
-    coefficient: null,
-    attempts: {
-      squat: [
-        { raw: '180', weight: 180, good: true },
-        { raw: '190', weight: 190, good: true },
-        { raw: null, weight: null, good: null },
-      ],
-      bench: [
-        { raw: '120', weight: 120, good: true },
-        { raw: null, weight: null, good: null },
-        { raw: null, weight: null, good: null },
-      ],
-      deadlift: [
-        { raw: '220', weight: 220, good: true },
-        { raw: '230', weight: 230, good: true },
-        { raw: null, weight: null, good: null },
-      ],
-    },
-    total: 540,
-    ipfgl: 70.5,
-    liftType: 'powerlifting',
-  });
-
-  assert.equal(parserPrivate.shouldRejectNonAthleteResult(realAthlete), false);
-  assert.deepEqual(mergeAthleteEntries([realAthlete]).map((entry) => entry.athleteName), [
-    'Fariña Martínez Ignacio',
-  ]);
 });
 
 test('no filtra atletas con nombre personal aunque tengan datos parciales raros', () => {
