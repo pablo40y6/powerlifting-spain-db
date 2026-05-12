@@ -50,6 +50,43 @@ function expectedCategoryForBodyweight(sex, bodyweight) {
   return `-${limit}kg`;
 }
 
+
+function categoryLimit(category) {
+  const normalized = normalizeCategory(category);
+  if (!normalized) return null;
+  if (normalized.startsWith('+')) return Infinity;
+  const match = normalized.match(/^-([0-9]+(?:\.[0-9]+)?)kg$/);
+  if (!match) return null;
+  return Number(match[1]);
+}
+
+function categoryClassIndex(sex, category) {
+  const normalized = normalizeCategory(category);
+  if (!normalized) return -1;
+  const classes = sex === 'F' ? WOMEN_CLASSES : sex === 'M' ? MEN_CLASSES : null;
+  if (!classes) return -1;
+  const limit = categoryLimit(normalized);
+  if (limit === null) return -1;
+  return classes.findIndex((item) => item === limit);
+}
+
+function shouldReportCategoryBodyweightMismatch(sex, category, bodyweight, expected) {
+  if (!category || !expected) return false;
+  if (category === expected) return false;
+  if (!isKnownCategoryForSex(sex, category)) return true;
+
+  const parsedLimit = categoryLimit(category);
+  if (parsedLimit === null) return true;
+
+  if (bodyweight > parsedLimit + EPSILON) return true;
+
+  const parsedIndex = categoryClassIndex(sex, category);
+  const expectedIndex = categoryClassIndex(sex, expected);
+  if (parsedIndex === -1 || expectedIndex === -1) return true;
+
+  return parsedIndex - expectedIndex > 1;
+}
+
 function isKnownCategoryForSex(sex, category) {
   const normalized = normalizeCategory(category);
   if (!normalized) return false;
@@ -161,7 +198,7 @@ function auditCategory(entry) {
   if (category && entry.sex && !isKnownCategoryForSex(entry.sex, category)) {
     findings.push(makeFinding(entry, 'error', 'category_invalid', 'Categoría no reconocida para el sexo indicado.', { value: entry.category, expected }));
   }
-  if (category && expected && category !== expected) {
+  if (shouldReportCategoryBodyweightMismatch(entry.sex, category, bw, expected)) {
     findings.push(makeFinding(entry, 'warning', 'category_bodyweight_mismatch', 'Categoría incompatible con el peso corporal.', { value: { bodyweight: bw, category: entry.category, sex: entry.sex }, expected }));
   }
   return findings;

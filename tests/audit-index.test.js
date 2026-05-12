@@ -39,12 +39,11 @@ function findingTypes(report) {
   return report.findings.map((finding) => finding.type);
 }
 
-test('categoría M 91.70 -105kg detecta expected -93kg', () => {
+test('categoría M 91.70 -105kg no alerta si el peso cabe en una clase válida adyacente', () => {
   assert.equal(expectedCategoryForBodyweight('M', 91.7), '-93kg');
   const report = auditIndex({ entries: [entry({ category: '-105kg' })] });
   const finding = report.findings.find((item) => item.type === 'category_bodyweight_mismatch');
-  assert.ok(finding);
-  assert.equal(finding.expected, '-93kg');
+  assert.equal(finding, undefined);
 });
 
 test('powerlifting sin sentadilla válida y con IPF GL alto genera warning/error', () => {
@@ -194,4 +193,44 @@ test('categorías realmente inválidas generan category_invalid', () => {
   const finding = report.findings.find((item) => item.type === 'category_invalid');
   assert.ok(finding);
   assert.equal(finding.severity, 'error');
+});
+
+test('category_bodyweight_mismatch tolera clases ligeras válidas aunque exista una teórica inferior', () => {
+  const report = auditIndex({
+    entries: [
+      entry({ sex: 'F', category: '-47kg', bodyweight: 42.36, rowKey: 'f47-light' }),
+      entry({ sex: 'M', category: '-59kg', bodyweight: 51.9, rowKey: 'm59-light' }),
+    ],
+  });
+
+  const mismatches = report.findings.filter((item) => item.type === 'category_bodyweight_mismatch');
+  assert.deepEqual(mismatches, []);
+});
+
+test('category_bodyweight_mismatch alerta cuando el peso supera el límite de la categoría', () => {
+  const report = auditIndex({
+    entries: [
+      entry({ sex: 'M', category: '-93kg', bodyweight: 101.12, rowKey: 'm93-heavy' }),
+    ],
+  });
+
+  const finding = report.findings.find((item) => item.type === 'category_bodyweight_mismatch');
+  assert.ok(finding);
+  assert.equal(finding.expected, '-105kg');
+});
+
+test('category_bodyweight_mismatch mantiene warnings para categorías demasiado alejadas', () => {
+  const report = auditIndex({
+    entries: [
+      entry({ sex: 'M', category: '-53kg', bodyweight: 114.16, rowKey: 'm53-extreme-low' }),
+      entry({ sex: 'M', category: '-120kg', bodyweight: 81.1, rowKey: 'm120-extreme-high' }),
+    ],
+  });
+
+  const byRowKey = new Map(report.findings
+    .filter((item) => item.type === 'category_bodyweight_mismatch')
+    .map((item) => [item.rowKey, item]));
+
+  assert.equal(byRowKey.get('m53-extreme-low')?.expected, '-120kg');
+  assert.equal(byRowKey.get('m120-extreme-high')?.expected, '-83kg');
 });
