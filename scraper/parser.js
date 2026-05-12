@@ -1621,6 +1621,33 @@ function entryHasAnyAttemptWeight(entry) {
   );
 }
 
+function attemptHasAnyRecordedValue(attempt) {
+  return attempt && (
+    (attempt.raw !== null && attempt.raw !== undefined && normalizeSpaces(attempt.raw) !== '') ||
+    attempt.weight !== null && attempt.weight !== undefined ||
+    attempt.good !== null && attempt.good !== undefined
+  );
+}
+
+function entryHasAnyRecordedAttempt(entry) {
+  return ['squat', 'bench', 'deadlift'].some((movement) =>
+    (entry?.attempts?.[movement] || []).some(attemptHasAnyRecordedValue)
+  );
+}
+
+function entryHasOtherRankableSportData(entry) {
+  if (entry?.coefficient !== null && entry?.coefficient !== undefined) return true;
+  return Boolean(entry?.movementRanks && Object.keys(entry.movementRanks).length);
+}
+
+function shouldRejectIncompletePowerliftingNoSportResult(entry, hasNoScore) {
+  if ((entry?.eventType || entry?.liftType || 'powerlifting') !== 'powerlifting') return false;
+  if (!hasNoScore) return false;
+  if (entryHasAnyRecordedAttempt(entry)) return false;
+  if (entryHasOtherRankableSportData(entry)) return false;
+  return entry?.isRankable === false;
+}
+
 function hasIncompleteNonRankableShape(entry, hasNoScore) {
   if (!hasNoScore || entryHasAnyAttemptWeight(entry)) return false;
   if (entry?.isRankable !== false) return false;
@@ -1658,6 +1685,10 @@ function shouldRejectNonAthleteResult(entry) {
   const hasNoSignificantAttempts = !entryHasSignificantSportAttempt(entry);
   const athleteNameIsNotClearPerson = !athleteNameLooksLikeClearPerson(athleteName);
   const hasInsufficientRankableScore = hasNoScore || entry?.isRankable === false;
+
+  if (shouldRejectIncompletePowerliftingNoSportResult(entry, hasNoScore)) {
+    return true;
+  }
 
   if (hasIncompleteNonRankableShape(entry, hasNoScore)) {
     return true;
