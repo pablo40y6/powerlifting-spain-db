@@ -1386,6 +1386,14 @@ function isRankingPointsCell(value) {
   return /^\s*\[\s*\d+(?:[.,]\d+)?\s*\]\s*$/.test(String(value || ''));
 }
 
+function hasLeadingTeamRankingToken(value) {
+  return /^\s*\[\s*\d+(?:[.,]\d+)?\s*\]/.test(String(value || ''));
+}
+
+function hasNumericPlacing(value) {
+  return /^\s*\d+\s*$/.test(String(value || ''));
+}
+
 function hasRankingOrTeamPointsToken(value) {
   const text = String(value || '');
   return /\[\s*\d+(?:[.,]\d+)?\s*\]/.test(text) ||
@@ -1461,13 +1469,30 @@ function shouldRejectNonAthleteResult(entry) {
     (entry?.ipfgl === null || entry?.ipfgl === undefined);
   const hasTeamRankingClubToken = isRankingPointsCell(club) || hasRankingOrTeamPointsToken(club);
   const athleteNameLooksLikeTeam = athleteNameLooksLikeClubOrTeam(athleteName) || athleteNameHasClubShape(athleteName);
+  const hasNoBodyweight = entry?.bodyweight === null || entry?.bodyweight === undefined;
+  const hasNoSignificantAttempts = !entryHasSignificantSportAttempt(entry);
+
+  // Clasificaciones por clubes/equipos pueden venir desplazadas al formato de
+  // atleta: el nombre de equipo cae en athleteName y la posición/puntos del
+  // equipo en club ("[9]", "[9] 73,73 GL Pts"). Esta señal es fuerte por el
+  // contexto de la fila y no debe depender de que el nombre parezca club.
+  if (
+    hasLeadingTeamRankingToken(club) &&
+    hasNoBodyweight &&
+    hasNoScore &&
+    entry?.isRankable === false &&
+    hasNoSignificantAttempts &&
+    hasNumericPlacing(entry?.placing)
+  ) {
+    return true;
+  }
 
   if (
     athleteNameLooksLikeTeam &&
     hasTeamRankingClubToken &&
-    (entry?.bodyweight === null || entry?.bodyweight === undefined) &&
+    hasNoBodyweight &&
     entry?.isRankable === false &&
-    !entryHasSignificantSportAttempt(entry)
+    hasNoSignificantAttempts
   ) {
     return true;
   }

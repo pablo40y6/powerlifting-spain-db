@@ -93,6 +93,73 @@ test('no indexa filas de clubes con ranking, sin total/IPF GL ni intentos', () =
 });
 
 
+
+test('no indexa clasificaciones de clubes detectadas por ranking en el club aunque el nombre no sea obvio', () => {
+  const clubRows = [
+    athleteEntry({
+      lifterName: 'ALFA Forjando Atletas Madrid',
+      club: '[9]',
+      competition: competition('Copa de España Absoluta'),
+      category: '+120kg',
+      placing: '7',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'bench',
+    }),
+    athleteEntry({
+      lifterName: 'ALFA Forjando Atletas Madrid',
+      club: '[9] 73,73 GL Pts',
+      competition: competition('30º Campeonato de España Absoluto de PRESS BANCA'),
+      category: '+120kg',
+      placing: '10',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'bench',
+    }),
+    athleteEntry({
+      lifterName: 'ALTERNATIVE RAW Huelva',
+      club: '[12]',
+      competition: competition('Campeonato de España OPEN de PESO MUERTO'),
+      category: '-120kg',
+      placing: '3',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'deadlift',
+    }),
+    athleteEntry({
+      lifterName: 'BLACK CROWN Madrid',
+      club: '[8]',
+      placing: '6',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'bench',
+    }),
+    athleteEntry({
+      lifterName: 'DANIGPOWER Madrid',
+      club: '[11]',
+      placing: '8',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'bench',
+    }),
+  ];
+
+  for (const row of clubRows) {
+    assert.equal(parserPrivate.shouldRejectNonAthleteResult(row), true, row.athleteName);
+  }
+  assert.deepEqual(mergeAthleteEntries(clubRows), []);
+});
+
 test('no indexa filas de clasificación por clubes con puntos desplazados', () => {
   const clubRows = [
     athleteEntry({
@@ -153,6 +220,42 @@ test('no filtra atletas con nombre personal aunque tengan datos parciales raros'
   assert.equal(parserPrivate.shouldRejectNonAthleteResult(partialAthlete), false);
   assert.deepEqual(mergeAthleteEntries([partialAthlete]).map((entry) => entry.athleteName), [
     'Aranda Sanchez Saul',
+  ]);
+});
+
+test('mantiene atletas reales con club real aunque no tengan marca rankeable', () => {
+  const realAthlete = athleteEntry({
+    lifterName: 'Eduardo Rallo Madrid',
+    club: 'ZAB',
+    placing: '4',
+    bodyweight: null,
+    attempts: emptyAttempts(),
+    total: null,
+    ipfgl: null,
+    liftType: 'bench',
+  });
+
+  assert.equal(parserPrivate.shouldRejectNonAthleteResult(realAthlete), false);
+  assert.deepEqual(mergeAthleteEntries([realAthlete]).map((entry) => entry.athleteName), [
+    'Eduardo Rallo Madrid',
+  ]);
+});
+
+test('mantiene atletas reales con intentos significativos aunque tengan placing y club con ranking', () => {
+  const realAthlete = athleteEntry({
+    lifterName: 'Eduardo Rallo Madrid',
+    club: '[9]',
+    placing: '4',
+    bodyweight: null,
+    attempts: deadliftOnlyAttempt(180),
+    total: null,
+    ipfgl: null,
+    liftType: 'deadlift',
+  });
+
+  assert.equal(parserPrivate.shouldRejectNonAthleteResult(realAthlete), false);
+  assert.deepEqual(mergeAthleteEntries([realAthlete]).map((entry) => entry.athleteName), [
+    'Eduardo Rallo Madrid',
   ]);
 });
 
