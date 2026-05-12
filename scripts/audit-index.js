@@ -6,6 +6,7 @@ const { normalizeName, extractYear } = require('../scraper/utils');
 const DEFAULT_INDEX_PATH = path.join(__dirname, '..', 'data', 'index.json');
 const DEFAULT_REPORT_JSON_PATH = path.join(__dirname, '..', 'data', 'audit-report.json');
 const DEFAULT_REPORT_MD_PATH = path.join(__dirname, '..', 'data', 'audit-report.md');
+const DEFAULT_TOTAL_ATTEMPT_SUM_MISMATCH_DEBUG_PATH = path.join(__dirname, '..', 'data', 'debug-total-attempt-sum-mismatch.json');
 const CURRENT_YEAR = new Date().getUTCFullYear();
 const EPSILON = 0.01;
 
@@ -392,20 +393,118 @@ function diffKey(value) {
   return Number(value.toFixed(2)).toString();
 }
 
+function serializeAttempt(attempt) {
+  if (!attempt || typeof attempt !== 'object') {
+    return {
+      weight: attempt ?? null,
+      good: null,
+    };
+  }
+  return {
+    ...attempt,
+    weight: attempt.weight ?? null,
+    good: attempt.good ?? null,
+  };
+}
+
 function summarizeAttempts(entry) {
   return Object.fromEntries(Object.entries(getAttemptGroups(entry)).map(([movement, attempts]) => [
     movement,
-    attempts.map((attempt) => ({
-      weight: attempt?.weight ?? null,
-      good: attempt?.good ?? null,
-    })),
+    attempts.map(serializeAttempt),
   ]));
+}
+
+function compactObject(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+}
+
+function pickMetadata(entry, pattern, excludedKeys = new Set()) {
+  const metadata = {};
+  for (const [key, value] of Object.entries(entry || {})) {
+    if (excludedKeys.has(key)) continue;
+    if (pattern.test(key)) metadata[key] = value;
+  }
+  return metadata;
+}
+
+function buildLabels(entry) {
+  return compactObject({
+    labels: entry.labels ?? null,
+    resultLabels: entry.resultLabels ?? null,
+    resultsLabel: entry.resultsLabel ?? null,
+    ageClass: entry.ageClass ?? entry.ageCategory ?? null,
+    division: entry.division ?? null,
+    equipment: entry.equipment ?? null,
+    club: entry.club ?? null,
+  });
+}
+
+function buildMismatchFinding(entry, parsedBestAttemptSum, total, diff) {
+  const excludedMetadataKeys = new Set(['attempts']);
+  return compactObject({
+    athleteName: entry.athleteName || null,
+    competitionName: entry.competitionName || null,
+    rowKey: entry.rowKey || null,
+    sex: entry.sex || null,
+    category: entry.category || null,
+    bodyweight: entry.bodyweight ?? null,
+    officialTotal: total,
+    parsedBestAttemptSum,
+    diff,
+    liftType: entry.liftType ?? null,
+    eventType: entry.eventType ?? entry.liftType ?? 'powerlifting',
+    isRankable: entry.isRankable ?? null,
+    hasValidPowerliftingTotal: entry.hasValidPowerliftingTotal ?? null,
+    attempts: summarizeAttempts(entry),
+    labels: buildLabels(entry),
+    resultsUrl: entry.resultsUrl || null,
+    resultsLabel: entry.resultsLabel ?? null,
+    competitionYear: entry.competitionYear ?? null,
+    sourceMetadata: pickMetadata(entry, /(?:^source|source$|source[A-Z_]|origin|crawl|scrap|file|sheet|page|row|url)/i, excludedMetadataKeys),
+    resultMetadata: pickMetadata(entry, /(?:^result|^results|result$|results$|meet|competition|parser|metadata)/i, excludedMetadataKeys),
+  });
+}
+
+function incrementDistribution(distribution, key) {
+  const normalized = key === undefined || key === null || key === '' ? 'null' : String(key);
+  distribution[normalized] = (distribution[normalized] || 0) + 1;
+}
+
+function sortedDistribution(distribution, numericKeys = false) {
+  return Object.fromEntries(Object.entries(distribution).sort((a, b) => {
+    if (numericKeys) return Number(a[0]) - Number(b[0]);
+    return b[1] - a[1] || a[0].localeCompare(b[0]);
+  }));
+}
+
+function exampleFromFinding(finding) {
+  return {
+    athleteName: finding.athleteName,
+    competitionName: finding.competitionName,
+    rowKey: finding.rowKey,
+    officialTotal: finding.officialTotal,
+    parsedBestAttemptSum: finding.parsedBestAttemptSum,
+    diff: finding.diff,
+    resultsUrl: finding.resultsUrl,
+  };
+}
+
+function addLimitedExample(groups, key, finding, limit) {
+  const normalized = key === undefined || key === null || key === '' ? 'null' : String(key);
+  if (!groups[normalized]) groups[normalized] = [];
+  if (groups[normalized].length < limit) groups[normalized].push(exampleFromFinding(finding));
 }
 
 function buildTotalAttemptSumMismatchDebug(entries, options = {}) {
   const exampleLimit = options.exampleLimit || 5;
   const groups = new Map();
   const diffDistribution = {};
+  const resultsUrlDistribution = {};
+  const competitionDistribution = {};
+  const examplesByDiff = {};
+  const examplesByResultsUrl = {};
+  const examplesByCompetition = {};
+  const findings = [];
   let count = 0;
 
   for (const entry of entries) {
@@ -418,7 +517,16 @@ function buildTotalAttemptSumMismatchDebug(entries, options = {}) {
 
     const diff = Number((parsedBestAttemptSum - total).toFixed(2));
     const diffBucket = diffKey(diff);
-    diffDistribution[diffBucket] = (diffDistribution[diffBucket] || 0) + 1;
+    const resultUrlKey = entry.resultsUrl || null;
+    const competitionKey = [entry.competitionName || 'sin competición', entry.competitionYear ?? 'sin año'].join(' | ');
+    const finding = buildMismatchFinding(entry, parsedBestAttemptSum, total, diff);
+    findings.push(finding);
+    incrementDistribution(diffDistribution, diffBucket);
+    incrementDistribution(resultsUrlDistribution, resultUrlKey);
+    incrementDistribution(competitionDistribution, competitionKey);
+    addLimitedExample(examplesByDiff, diffBucket, finding, exampleLimit);
+    addLimitedExample(examplesByResultsUrl, resultUrlKey, finding, exampleLimit);
+    addLimitedExample(examplesByCompetition, competitionKey, finding, exampleLimit);
     count += 1;
 
     const groupKey = JSON.stringify({
@@ -457,11 +565,32 @@ function buildTotalAttemptSumMismatchDebug(entries, options = {}) {
 
   return {
     count,
-    diffDistribution: Object.fromEntries(Object.entries(diffDistribution).sort((a, b) => Number(a[0]) - Number(b[0]))),
+    diffDistribution: sortedDistribution(diffDistribution, true),
+    resultsUrlDistribution: sortedDistribution(resultsUrlDistribution),
+    topResultsUrls: Object.entries(sortedDistribution(resultsUrlDistribution))
+      .slice(0, options.topResultsUrlLimit || 20)
+      .map(([resultsUrl, total]) => ({ resultsUrl: resultsUrl === 'null' ? null : resultsUrl, count: total })),
+    competitionDistribution: sortedDistribution(competitionDistribution),
+    examplesByDiff,
+    examplesByResultsUrl,
+    examplesByCompetition,
+    summary: {
+      count,
+      diffDistribution: sortedDistribution(diffDistribution, true),
+      resultsUrlDistribution: sortedDistribution(resultsUrlDistribution),
+      topResultsUrls: Object.entries(sortedDistribution(resultsUrlDistribution))
+        .slice(0, options.topResultsUrlLimit || 20)
+        .map(([resultsUrl, total]) => ({ resultsUrl: resultsUrl === 'null' ? null : resultsUrl, count: total })),
+      competitionDistribution: sortedDistribution(competitionDistribution),
+      examplesByDiff,
+      examplesByResultsUrl,
+      examplesByCompetition,
+    },
+    findings,
     groups: Array.from(groups.values())
       .map((group) => ({
         ...group,
-        diffDistribution: Object.fromEntries(Object.entries(group.diffDistribution).sort((a, b) => Number(a[0]) - Number(b[0]))),
+        diffDistribution: sortedDistribution(group.diffDistribution, true),
       }))
       .sort((a, b) => b.count - a.count || String(a.resultsUrl || '').localeCompare(String(b.resultsUrl || ''))),
   };
@@ -606,6 +735,7 @@ function parseArgs(argv) {
     indexPath: argv.find((arg) => arg.startsWith('--index='))?.slice('--index='.length) || DEFAULT_INDEX_PATH,
     jsonPath: argv.find((arg) => arg.startsWith('--json='))?.slice('--json='.length) || DEFAULT_REPORT_JSON_PATH,
     mdPath: argv.find((arg) => arg.startsWith('--md='))?.slice('--md='.length) || DEFAULT_REPORT_MD_PATH,
+    totalAttemptSumMismatchDebugPath: argv.find((arg) => arg.startsWith('--debug-total-attempt-sum-mismatch='))?.slice('--debug-total-attempt-sum-mismatch='.length) || DEFAULT_TOTAL_ATTEMPT_SUM_MISMATCH_DEBUG_PATH,
   };
 }
 
@@ -618,11 +748,15 @@ function main(argv = process.argv.slice(2)) {
   const index = JSON.parse(fs.readFileSync(options.indexPath, 'utf8'));
   const report = auditIndex(index);
   fs.mkdirSync(path.dirname(options.jsonPath), { recursive: true });
+  fs.mkdirSync(path.dirname(options.mdPath), { recursive: true });
+  fs.mkdirSync(path.dirname(options.totalAttemptSumMismatchDebugPath), { recursive: true });
   fs.writeFileSync(options.jsonPath, `${JSON.stringify(report, null, 2)}\n`);
   fs.writeFileSync(options.mdPath, renderMarkdown(report));
+  fs.writeFileSync(options.totalAttemptSumMismatchDebugPath, `${JSON.stringify(report.debug.totalAttemptSumMismatch, null, 2)}\n`);
   printSummary(report);
   console.log(`\nInforme JSON: ${path.relative(process.cwd(), options.jsonPath)}`);
   console.log(`Informe Markdown: ${path.relative(process.cwd(), options.mdPath)}`);
+  console.log(`Debug total_attempt_sum_mismatch: ${path.relative(process.cwd(), options.totalAttemptSumMismatchDebugPath)}`);
   return options.strict && report.summary.errors > 0 ? 1 : 0;
 }
 
