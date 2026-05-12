@@ -301,6 +301,71 @@ test('no indexa rankings de equipos con puntuación desplazada a club o bodyweig
   assert.deepEqual(mergeAthleteEntries(clubRows), []);
 });
 
+
+test('no indexa filas de equipos nacionales con fórmula decimal de puntos', () => {
+  const rows = [
+    athleteEntry({
+      lifterName: 'ESPAÑA',
+      club: '[102,83+99,54+97,67+96,41+93,39]',
+      competition: competition('II Copa de los Pirineos'),
+      placing: '1',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    }),
+    athleteEntry({
+      lifterName: 'FRANCIA',
+      club: '[104,17+102,76+102,06+93,03+86,16]',
+      competition: competition('II Copa de los Pirineos'),
+      placing: '2',
+      bodyweight: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    }),
+  ];
+
+  for (const row of rows) {
+    assert.equal(parserPrivate.shouldRejectNonAthleteResult(row), true, row.athleteName);
+  }
+  assert.deepEqual(mergeAthleteEntries(rows), []);
+});
+
+test('no indexa filas incompletas no rankeables sin marcas deportivas', () => {
+  const rows = [
+    athleteEntry({
+      lifterName: 'Fariña Crepo Raul',
+      club: 'CLUB TEST',
+      placing: '4',
+      bodyweight: 90.02,
+      coefficient: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    }),
+    athleteEntry({
+      lifterName: 'Moldovan (AI) Valentin',
+      club: 'CLUB TEST',
+      placing: 'AI',
+      bodyweight: 96.44,
+      coefficient: null,
+      attempts: emptyAttempts(),
+      total: null,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    }),
+  ];
+
+  for (const row of rows) {
+    assert.equal(parserPrivate.shouldRejectNonAthleteResult(row), true, row.athleteName);
+  }
+  assert.deepEqual(mergeAthleteEntries(rows), []);
+});
+
 test('no filtra atletas con nombre personal aunque tengan datos parciales raros', () => {
   const partialAthlete = athleteEntry({
     lifterName: 'Aranda Sanchez Saul',

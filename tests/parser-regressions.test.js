@@ -31,6 +31,50 @@ test('parser de intentos: repara decimal perdido en intento negativo imposible',
   assert.notEqual(attempt.weight, 975);
 });
 
+
+test('Corbalan Lopez Emilia: repara el intento -975 sin dejar peso auditable 975', () => {
+  const entry = _private.makeAthleteEntry({
+    competition: competition('IV Campeonato de Valencia'),
+    sex: 'F',
+    category: '-69kg',
+    placing: '1',
+    lifterName: 'Corbalan Lopez Emilia',
+    yearOfBirth: 1990,
+    club: 'CLUB TEST',
+    bodyweight: 68.5,
+    coefficient: 0.1,
+    order: 1,
+    attempts: {
+      squat: [
+        { raw: '-975', weight: 975, good: false },
+        { raw: '-97.5', weight: 97.5, good: false },
+        { raw: '97.5', weight: 97.5, good: true },
+      ],
+      bench: [
+        { raw: '65', weight: 65, good: true },
+        { raw: null, weight: null, good: null },
+        { raw: null, weight: null, good: null },
+      ],
+      deadlift: [
+        { raw: '140', weight: 140, good: true },
+        { raw: null, weight: null, good: null },
+        { raw: null, weight: null, good: null },
+      ],
+      __labels: { squat: 'Sentadilla', bench: 'Banca', deadlift: 'Peso muerto' },
+    },
+    total: 302.5,
+    ipfgl: 50,
+    liftType: 'powerlifting',
+  });
+
+  assert.equal(entry.attempts.squat[0].raw, '-975');
+  assert.equal(entry.attempts.squat[0].good, false);
+  assert.equal(entry.attempts.squat[0].weight, 97.5);
+  assert.equal(entry.attempts.squat.some((attempt) => attempt.weight === 975), false);
+  assert.equal(entry.total, 302.5);
+  assert.equal(entry.isRankable, true);
+});
+
 test('resultado incompleto sin Total/IPF GL neutraliza intentos absurdos aislados', () => {
   for (const lifterName of ['Fariña Crepo Raul', 'Moldovan (AI) Valentin']) {
     const entry = _private.makeAthleteEntry({

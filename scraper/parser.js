@@ -126,7 +126,8 @@ function makeAthleteEntry({
 }) {
   const athleteName = normalizeSpaces(lifterName);
   const eventType = liftType || 'powerlifting';
-  const sanitizedAttempts = sanitizeAttemptsForIncompleteResult(attempts, { total, ipfgl, eventType });
+  const normalizedAttempts = normalizeAuditableAttempts(attempts);
+  const sanitizedAttempts = sanitizeAttemptsForIncompleteResult(normalizedAttempts, { total, ipfgl, eventType });
   const validPowerliftingTotal = hasValidPowerliftingTotal(sanitizedAttempts, eventType);
   const rankableTotal = total !== null && total !== undefined && total > 0;
   const isRankable = Boolean(isIndividualResult && rankableTotal && validPowerliftingTotal);
@@ -152,6 +153,37 @@ function makeAthleteEntry({
     hasValidPowerliftingTotal: validPowerliftingTotal,
     isRankable,
     competition,
+  };
+}
+
+
+function normalizeAuditableAttempt(attempt) {
+  if (!attempt || attempt.weight === null || attempt.weight === undefined) return attempt;
+
+  const weight = Number(attempt.weight);
+  if (!Number.isFinite(weight)) return attempt;
+
+  const raw = attempt.raw === null || attempt.raw === undefined ? '' : String(attempt.raw).trim();
+  const looksLikeFailedNegative = attempt.good === false && raw.startsWith('-');
+  const repaired = weight / 10;
+
+  if (looksLikeFailedNegative && weight > 500 && repaired >= 20 && repaired <= 500) {
+    return {
+      ...attempt,
+      weight: repaired,
+    };
+  }
+
+  return attempt;
+}
+
+function normalizeAuditableAttempts(attempts) {
+  if (!attempts) return attempts;
+  return {
+    ...attempts,
+    squat: (attempts.squat || []).map(normalizeAuditableAttempt),
+    bench: (attempts.bench || []).map(normalizeAuditableAttempt),
+    deadlift: (attempts.deadlift || []).map(normalizeAuditableAttempt),
   };
 }
 
@@ -1490,7 +1522,7 @@ function textLooksLikeTeamPoints(value) {
 }
 
 function hasTeamPointsFormula(value) {
-  return /\[(?:\s*\d+\s*\+)+\s*\d+\s*\]/.test(String(value || ''));
+  return /\[\s*\d+(?:[.,]\d+)?(?:\s*\+\s*\d+(?:[.,]\d+)?)+\s*\]/.test(String(value || ''));
 }
 
 function isRankingPointsCell(value) {
@@ -1589,6 +1621,20 @@ function entryHasAnyAttemptWeight(entry) {
   );
 }
 
+function hasIncompleteNonRankableShape(entry, hasNoScore) {
+  if (!hasNoScore || entryHasAnyAttemptWeight(entry)) return false;
+  if (entry?.isRankable !== false) return false;
+
+  const placing = normalizeSpaces(entry?.placing);
+  const explicitlyNotRanked = /^(AI|DT|DQ|DSQ)$/i.test(placing) || /\bAI\b/i.test(String(entry?.athleteName || entry?.lifterName || ''));
+  const parsedWithOnlyAdministrativeFields =
+    hasNumericPlacing(placing) &&
+    entry?.bodyweight !== null && entry?.bodyweight !== undefined &&
+    (entry?.coefficient === null || entry?.coefficient === undefined);
+
+  return explicitlyNotRanked || parsedWithOnlyAdministrativeFields;
+}
+
 function entryHasSignificantSportAttempt(entry) {
   return ['squat', 'bench', 'deadlift'].some((movement) =>
     (entry?.attempts?.[movement] || []).some((attempt) => {
@@ -1612,6 +1658,10 @@ function shouldRejectNonAthleteResult(entry) {
   const hasNoSignificantAttempts = !entryHasSignificantSportAttempt(entry);
   const athleteNameIsNotClearPerson = !athleteNameLooksLikeClearPerson(athleteName);
   const hasInsufficientRankableScore = hasNoScore || entry?.isRankable === false;
+
+  if (hasIncompleteNonRankableShape(entry, hasNoScore)) {
+    return true;
+  }
 
   // Clasificaciones por clubes/equipos pueden venir desplazadas al formato de
   // atleta: el nombre de equipo cae en athleteName y la posición/puntos del
@@ -2655,6 +2705,7 @@ module.exports = {
     formatCategoryToken,
     repairAttemptsUsingReportedTotal,
     sanitizeAttemptsForIncompleteResult,
+    normalizeAuditableAttempts,
     buildExcelLayoutFromHeaderRow,
   },
 };
