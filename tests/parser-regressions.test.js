@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const XLSX = require('xlsx-js-style');
 const { parseDocument, _private } = require('../scraper/parser');
 const { searchAthletes, _private: crawlerPrivate } = require('../scraper/crawler');
-const { isLikelyResultsDocument, looksLikeCompetitionUrl, normalizeName } = require('../scraper/utils');
+const { isLikelyResultsDocument, looksLikeCompetitionUrl, normalizeName, parseAttempt } = require('../scraper/utils');
 
 function competition(name = 'Competición de prueba') {
   return _private.buildCompetitionMeta({ pageTitle: name, meetPageUrl: 'https://powerliftingspain.es/test/' }, { name });
@@ -16,6 +16,63 @@ function hasFailedAttempt(entry) {
 }
 
 
+
+
+test('parser de intentos: ceros son vacíos y negativos siguen siendo nulos', () => {
+  assert.deepEqual(parseAttempt(0), { raw: null, weight: null, good: null });
+  assert.deepEqual(parseAttempt('0.00'), { raw: null, weight: null, good: null });
+  assert.deepEqual(parseAttempt('-112.5'), { raw: '-112.5', weight: 112.5, good: false });
+});
+
+test('parser de intentos: repara decimal perdido en intento negativo imposible', () => {
+  const attempt = parseAttempt('-975');
+  assert.equal(attempt.good, false);
+  assert.equal(attempt.weight, 97.5);
+  assert.notEqual(attempt.weight, 975);
+});
+
+test('resultado incompleto sin Total/IPF GL neutraliza intentos absurdos aislados', () => {
+  for (const lifterName of ['Fariña Crepo Raul', 'Moldovan (AI) Valentin']) {
+    const entry = _private.makeAthleteEntry({
+      competition: competition('Fila parcial desplazada'),
+      sex: 'M',
+      category: lifterName.startsWith('Fariña') ? '+120kg' : '-105kg',
+      placing: 'AI',
+      lifterName,
+      yearOfBirth: 1990,
+      club: 'CLUB TEST',
+      bodyweight: lifterName.startsWith('Fariña') ? 90.02 : 96.44,
+      coefficient: null,
+      order: 1,
+      attempts: {
+        squat: [
+          { raw: '630', weight: 630, good: true },
+          { raw: '83.744401', weight: 83.744401, good: true },
+          { raw: null, weight: null, good: null },
+        ],
+        bench: [
+          { raw: '8', weight: 8, good: true },
+          { raw: null, weight: null, good: null },
+          { raw: null, weight: null, good: null },
+        ],
+        deadlift: [
+          { raw: null, weight: null, good: null },
+          { raw: null, weight: null, good: null },
+          { raw: null, weight: null, good: null },
+        ],
+        __labels: { squat: 'Sentadilla', bench: 'Banca', deadlift: 'Peso muerto' },
+      },
+      total: null,
+      ipfgl: null,
+      liftType: 'powerlifting',
+    });
+
+    const goodWeights = ['squat', 'bench', 'deadlift'].flatMap((movement) =>
+      entry.attempts[movement].filter((attempt) => attempt.good === true).map((attempt) => attempt.weight)
+    );
+    assert.deepEqual(goodWeights, []);
+  }
+});
 
 test('búsqueda por tokens normalizados sin depender del orden', () => {
   const index = {

@@ -34,6 +34,7 @@ const {
   formatDateISO,
   normalizeName,
   normalizeSpaces,
+  normalizeAttemptWeight,
   parseLocaleNumber,
   parseSpanishDate,
 } = require('./utils');
@@ -125,7 +126,8 @@ function makeAthleteEntry({
 }) {
   const athleteName = normalizeSpaces(lifterName);
   const eventType = liftType || 'powerlifting';
-  const validPowerliftingTotal = hasValidPowerliftingTotal(attempts, eventType);
+  const sanitizedAttempts = sanitizeAttemptsForIncompleteResult(attempts, { total, ipfgl, eventType });
+  const validPowerliftingTotal = hasValidPowerliftingTotal(sanitizedAttempts, eventType);
   const rankableTotal = total !== null && total !== undefined && total > 0;
   const isRankable = Boolean(isIndividualResult && rankableTotal && validPowerliftingTotal);
 
@@ -142,7 +144,7 @@ function makeAthleteEntry({
     order: order ?? null,
     total: total ?? null,
     ipfgl: ipfgl ?? null,
-    attempts,
+    attempts: sanitizedAttempts,
     liftType: eventType,
     eventType,
     movementRanks: movementRanks || null,
@@ -150,6 +152,35 @@ function makeAthleteEntry({
     hasValidPowerliftingTotal: validPowerliftingTotal,
     isRankable,
     competition,
+  };
+}
+
+function attemptHasNumericWeight(attempt) {
+  return attempt && attempt.weight !== null && attempt.weight !== undefined && Number.isFinite(Number(attempt.weight));
+}
+
+function attemptIsExtremelyHigh(attempt) {
+  return attemptHasNumericWeight(attempt) && Number(attempt.weight) > 500;
+}
+
+function clearAttemptGroup(group) {
+  return (group || []).map(() => ({ raw: null, weight: null, good: null }));
+}
+
+function sanitizeAttemptsForIncompleteResult(attempts, { total, ipfgl, eventType } = {}) {
+  if (!attempts || (eventType || 'powerlifting') !== 'powerlifting') return attempts;
+  const hasOfficialScore = (total !== null && total !== undefined) || (ipfgl !== null && ipfgl !== undefined);
+  if (hasOfficialScore) return attempts;
+  if (hasValidPowerliftingTotal(attempts, eventType)) return attempts;
+
+  const groups = [attempts.squat || [], attempts.bench || [], attempts.deadlift || []];
+  if (!groups.some((group) => group.some(attemptIsExtremelyHigh))) return attempts;
+
+  return {
+    ...attempts,
+    squat: clearAttemptGroup(attempts.squat),
+    bench: clearAttemptGroup(attempts.bench),
+    deadlift: clearAttemptGroup(attempts.deadlift),
   };
 }
 
@@ -1655,9 +1686,9 @@ function parseGoodliftAttempt(raw) {
   if (!numericMatch) return { raw: text, weight: null, good: null };
 
   const weight = parseLocaleNumber(numericMatch[0]);
-  if (weight === null) return { raw: text, weight: null, good: null };
+  if (weight === null || weight === 0) return { raw: null, weight: null, good: null };
 
-  return { raw: text, weight: Math.abs(weight), good: !numericMatch[0].startsWith('-') };
+  return { raw: text, weight: normalizeAttemptWeight(weight, numericMatch[0]), good: !numericMatch[0].startsWith('-') };
 }
 
 function goodliftAttemptsObject({ squatTokens, benchTokens, deadliftTokens }) {
@@ -2623,6 +2654,7 @@ module.exports = {
     inferPowerliftingCategoryFromBodyweight,
     formatCategoryToken,
     repairAttemptsUsingReportedTotal,
+    sanitizeAttemptsForIncompleteResult,
     buildExcelLayoutFromHeaderRow,
   },
 };

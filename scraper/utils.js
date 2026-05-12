@@ -75,13 +75,30 @@ function parseLocaleNumber(raw) {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizeAttemptWeight(num, rawText = '') {
+  const weight = Math.abs(num);
+  const text = String(rawText ?? '').trim();
+
+  // A few PDF table extractions lose the decimal separator on failed attempts
+  // (for example "-975" instead of "-97.5"). Only repair obviously
+  // impossible negative integer attempts, keeping genuine decimal negatives like
+  // "-112.5" as normal failed attempts.
+  if (num < 0 && weight > 500 && weight <= 1500 && /^-?\d+$/.test(text || String(num))) {
+    const repaired = weight / 10;
+    if (repaired >= 20 && repaired <= 500) return repaired;
+  }
+
+  return weight;
+}
+
 function parseAttempt(raw) {
   if (raw === null || raw === undefined || raw === '') {
     return { raw: null, weight: null, good: null };
   }
 
   if (typeof raw === 'number') {
-    return { raw, weight: Math.abs(raw), good: raw >= 0 };
+    if (raw === 0) return { raw: null, weight: null, good: null };
+    return { raw, weight: normalizeAttemptWeight(raw, String(raw)), good: raw > 0 };
   }
 
   const text = String(raw).trim();
@@ -89,10 +106,10 @@ function parseAttempt(raw) {
     return { raw: null, weight: null, good: null };
   }
   const num = parseLocaleNumber(text);
-  if (num === null) {
-    return { raw: text, weight: null, good: null };
+  if (num === null || num === 0) {
+    return num === 0 ? { raw: null, weight: null, good: null } : { raw: text, weight: null, good: null };
   }
-  return { raw: text, weight: Math.abs(num), good: !text.startsWith('-') };
+  return { raw: text, weight: normalizeAttemptWeight(num, text), good: !text.startsWith('-') };
 }
 
 function attemptsFromValues(values) {
@@ -190,6 +207,7 @@ module.exports = {
   isSameDomain,
   getExtension,
   parseLocaleNumber,
+  normalizeAttemptWeight,
   parseAttempt,
   attemptsFromValues,
   parseSpanishDate,
