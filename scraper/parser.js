@@ -1386,6 +1386,10 @@ function isRankingPointsCell(value) {
   return /^\s*\[\s*\d+(?:[.,]\d+)?\s*\]\s*$/.test(String(value || ''));
 }
 
+function isDecimalPointsCell(value) {
+  return /^\s*\d+(?:[.,]\d+)\s*$/.test(String(value || ''));
+}
+
 function hasLeadingTeamRankingToken(value) {
   return /^\s*\[\s*\d+(?:[.,]\d+)?\s*\]/.test(String(value || ''));
 }
@@ -1398,7 +1402,8 @@ function hasRankingOrTeamPointsToken(value) {
   const text = String(value || '');
   return /\[\s*\d+(?:[.,]\d+)?\s*\]/.test(text) ||
     /\b(?:gl\s*)?pts?\b/i.test(text) ||
-    hasTeamPointsFormula(text);
+    hasTeamPointsFormula(text) ||
+    isDecimalPointsCell(text);
 }
 
 function athleteNameHasClubShape(name) {
@@ -1415,6 +1420,29 @@ function athleteNameHasClubShape(name) {
   if (allCaps && hasTeamSeparators) return true;
 
   return false;
+}
+
+function athleteNameLooksLikeClearPerson(name) {
+  const raw = normalizeSpaces(name);
+  if (!raw || /[\d[\]+]/.test(raw) || /[-'’]/.test(raw)) return false;
+  const normalized = normalizeName(raw);
+  const teamWords = /\b(powerlifting|barbell|strength|sparta|ironside|club|team|soy\s+powerlifter|gimnasio|gym|academy|box|crossfit|atletas|fuerza|power|ambition)\b/;
+  if (teamWords.test(normalized)) return false;
+
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 5) return false;
+
+  const tokenCase = tokens.map((token) => {
+    if (!/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+$/.test(token)) return null;
+    const letters = token.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
+    const upperLetters = token.replace(/[^A-ZÁÉÍÓÚÜÑ]/g, '');
+    return { hasLowercase: upperLetters.length !== letters.length };
+  });
+  if (tokenCase.some((value) => value === null)) return false;
+
+  const hasNormalNameCasing = tokenCase.every(({ hasLowercase }) => hasLowercase);
+  const hasAllCapsPersonalNameShape = tokens.length >= 3 && tokenCase.every(({ hasLowercase }) => !hasLowercase);
+  return hasNormalNameCasing || hasAllCapsPersonalNameShape;
 }
 
 function athleteNameLooksLikeClubOrTeam(name, options = {}) {
@@ -1471,18 +1499,21 @@ function shouldRejectNonAthleteResult(entry) {
   const athleteNameLooksLikeTeam = athleteNameLooksLikeClubOrTeam(athleteName) || athleteNameHasClubShape(athleteName);
   const hasNoBodyweight = entry?.bodyweight === null || entry?.bodyweight === undefined;
   const hasNoSignificantAttempts = !entryHasSignificantSportAttempt(entry);
+  const athleteNameIsNotClearPerson = !athleteNameLooksLikeClearPerson(athleteName);
+  const hasInsufficientRankableScore = hasNoScore || entry?.isRankable === false;
 
   // Clasificaciones por clubes/equipos pueden venir desplazadas al formato de
   // atleta: el nombre de equipo cae en athleteName y la posición/puntos del
-  // equipo en club ("[9]", "[9] 73,73 GL Pts"). Esta señal es fuerte por el
-  // contexto de la fila y no debe depender de que el nombre parezca club.
+  // equipo en club ("[9]", "71,71", "[9] 73,73 GL Pts"). Algunas filas
+  // arrastran la puntuación a bodyweight, total o intentos bajos, por lo que
+  // la regla no debe depender solo de bodyweight === null.
   if (
-    hasLeadingTeamRankingToken(club) &&
-    hasNoBodyweight &&
-    hasNoScore &&
+    hasNumericPlacing(entry?.placing) &&
     entry?.isRankable === false &&
     hasNoSignificantAttempts &&
-    hasNumericPlacing(entry?.placing)
+    hasInsufficientRankableScore &&
+    hasTeamRankingClubToken &&
+    (athleteNameLooksLikeTeam || athleteNameIsNotClearPerson)
   ) {
     return true;
   }
@@ -2502,6 +2533,7 @@ module.exports = {
     resultLooksLikeTeamOrSummary,
     shouldRejectNonAthleteResult,
     athleteNameLooksLikeClubOrTeam,
+    athleteNameLooksLikeClearPerson,
     parsePdfAthleteLine,
     parsePdfAthleteLineWithoutYear,
     parsePdfText,
