@@ -487,3 +487,62 @@ test('powerlifting sin sentadilla válida no es rankeable por Total/IPF GL', () 
   assert.equal(entry.hasValidPowerliftingTotal, false);
   assert.equal(entry.isRankable, false);
 });
+
+function successfulBestForTest(group) {
+  const values = group
+    .filter((attempt) => attempt && attempt.good === true && attempt.weight !== null)
+    .map((attempt) => attempt.weight);
+  return values.length ? Math.max(...values) : 0;
+}
+
+function computedPowerliftingTotalForTest(attempts) {
+  return successfulBestForTest(attempts.squat) +
+    successfulBestForTest(attempts.bench) +
+    successfulBestForTest(attempts.deadlift);
+}
+
+function goodAttemptForTest(weight) {
+  return { raw: String(weight), weight, good: true };
+}
+
+test('repara intentos nulos ocultos por estilo en XLS antiguo: Abad Gonzalez Teo', () => {
+  const attempts = {
+    squat: [165, 175, 182.5].map(goodAttemptForTest),
+    bench: [105, 110, 115].map(goodAttemptForTest),
+    deadlift: [205, 212.5, 212.5].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 502.5);
+
+  assert.equal(computedPowerliftingTotalForTest(repaired), 502.5);
+  assert.equal(repaired.squat[2].good, true);
+  assert.equal(repaired.bench[2].good, true);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, false, false]);
+});
+
+test('repara intentos nulos ocultos por estilo en XLS antiguo: Abarquero Diezhandino Ester', () => {
+  const attempts = {
+    squat: [110, 117.5, 125].map(goodAttemptForTest),
+    bench: [62.5, 67.5, 72.5].map(goodAttemptForTest),
+    deadlift: [140, 150, 150].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 332.5);
+
+  assert.equal(computedPowerliftingTotalForTest(attempts), 347.5);
+  assert.equal(computedPowerliftingTotalForTest(repaired), 332.5);
+  assert.deepEqual(repaired.deadlift.map((attempt) => attempt.good), [true, false, false]);
+});
+
+test('no inventa nulos si ningun combo de intentos existentes coincide con el total oficial', () => {
+  const attempts = {
+    squat: [100, 110, 120].map(goodAttemptForTest),
+    bench: [70, 75, 80].map(goodAttemptForTest),
+    deadlift: [130, 140, 150].map(goodAttemptForTest),
+  };
+
+  const repaired = _private.repairAttemptsUsingReportedTotal(attempts, 333);
+
+  assert.equal(computedPowerliftingTotalForTest(repaired), 350);
+  assert.deepEqual(repaired, attempts);
+});

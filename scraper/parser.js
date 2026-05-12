@@ -707,9 +707,11 @@ function indexedColorLooksRed(value) {
   const index = Number(value);
   if (!Number.isFinite(index)) return false;
 
-  // BIFF/XLS and OOXML indexed palettes commonly use 2 or 10 for red.
-  // We only use this on attempt cells, never on headers.
-  return index === 2 || index === 10;
+  // BIFF/XLS and OOXML indexed palettes commonly use 2, 3 or 10 for red
+  // depending on whether the source stores an indexed palette, a legacy
+  // Excel color index, or an OOXML-style indexed color. We only use this
+  // on attempt cells, never on headers.
+  return index === 2 || index === 3 || index === 10;
 }
 
 function inspectStyleObject(style, seen = new Set()) {
@@ -1102,73 +1104,151 @@ function inferStatusesForGroup(group, chosenBest) {
   return best;
 }
 
+function movementHasNumericAttempt(group) {
+  return (group || []).some((attempt) => attempt && attempt.weight !== null && attempt.weight !== undefined);
+}
+
+function planChangedSuccessfulAttempts(group, plan) {
+  return (group || []).reduce((count, attempt, index) => {
+    if (!attempt || attempt.weight === null || attempt.weight === undefined) return count;
+    return count + (attempt.good === true && plan.statuses[index] === false ? 1 : 0);
+  }, 0);
+}
+
+function planRespectsKnownFailures(group, plan) {
+  return (group || []).every((attempt, index) => {
+    if (!attempt || attempt.weight === null || attempt.weight === undefined) return true;
+    return !(attempt.good === false || attempt.good === null) || plan.statuses[index] !== true;
+  });
+}
+
+function repeatedChosenBestPenalty(group, chosenBest) {
+  const weights = (group || [])
+    .filter((attempt) => attempt && attempt.weight !== null && attempt.weight !== undefined)
+    .map((attempt) => attempt.weight);
+  if (!weights.length) return 0;
+
+  const maxWeight = Math.max(...weights);
+  if (Math.abs(maxWeight - chosenBest) >= 0.001) return 0;
+
+  const repetitionsAtBest = weights.filter((weight) => Math.abs(weight - chosenBest) < 0.001).length;
+  return repetitionsAtBest > 1 ? repetitionsAtBest - 1 : 0;
+}
+
+function planScoreForReportedTotalRepair(candidate) {
+  const changed =
+    planChangedSuccessfulAttempts(candidate.groups.squat, candidate.squatPlan) +
+    planChangedSuccessfulAttempts(candidate.groups.bench, candidate.benchPlan) +
+    planChangedSuccessfulAttempts(candidate.groups.deadlift, candidate.deadPlan);
+
+  const repeatedBestPenalty =
+    repeatedChosenBestPenalty(candidate.groups.squat, candidate.squatBest) +
+    repeatedChosenBestPenalty(candidate.groups.bench, candidate.benchBest) +
+    repeatedChosenBestPenalty(candidate.groups.deadlift, candidate.deadBest);
+
+  const planScore = candidate.squatPlan.score + candidate.benchPlan.score + candidate.deadPlan.score;
+
+  return {
+    // If the highest repeated attempt in a movement is the only way to keep the
+    // current best, the source likely hid a failed retry by color/strike. Prefer
+    // the exact-total reading that treats that repeated top attempt as failed
+    // before demoting a clean increasing sequence in another movement.
+    repeatedBestPenalty,
+    // Then keep the repair minimal and preserve as much explicit successful
+    // attempt information as possible.
+    changed,
+    // Finally prefer the internally most plausible status plan.
+    planScore,
+  };
+}
+
+function compareReportedTotalRepairCandidates(a, b) {
+  if (a.score.repeatedBestPenalty !== b.score.repeatedBestPenalty) {
+    return a.score.repeatedBestPenalty - b.score.repeatedBestPenalty;
+  }
+  if (a.score.changed !== b.score.changed) return a.score.changed - b.score.changed;
+  if (a.score.planScore !== b.score.planScore) return b.score.planScore - a.score.planScore;
+  return 0;
+}
+
 function repairAttemptsUsingReportedTotal(attempts, reportedTotal) {
-  const groups = [attempts.squat, attempts.bench, attempts.deadlift];
-  const allAttempts = groups.flat();
+  const groups = {
+    squat: attempts.squat || [],
+    bench: attempts.bench || [],
+    deadlift: attempts.deadlift || [],
+  };
+  const allGroups = [groups.squat, groups.bench, groups.deadlift];
 
   if (reportedTotal === null || reportedTotal === undefined) return attempts;
-  if (!allAttempts.length) return attempts;
-  if (allAttempts.some((attempt) => !attempt || attempt.weight === null)) return attempts;
-  if (allAttempts.some((attempt) => attempt.good === false || attempt.good === null)) return attempts;
+  if (!allGroups.every(movementHasNumericAttempt)) return attempts;
 
-  const currentTotal = groups.reduce((sum, group) => sum + bestSuccessfulWeight(group), 0);
+  const currentTotal = allGroups.reduce((sum, group) => sum + bestSuccessfulWeight(group), 0);
   if (Math.abs(currentTotal - reportedTotal) < 0.26) return attempts;
 
-  const candidateWeights = groups.map((group) => {
-    const values = [...new Set(group.map((attempt) => attempt.weight).filter((weight) => weight !== null))];
+  // Be conservative: this fallback only reconstructs visually hidden failed
+  // attempts when all currently-successful best attempts add up to more than the
+  // official total. If the parsed total is lower, a missing good attempt would
+  // require inventing data rather than marking hidden failures.
+  if (currentTotal <= reportedTotal + 0.26) return attempts;
+
+  const candidateWeights = allGroups.map((group) => {
+    const values = [...new Set(group
+      .filter((attempt) => attempt && attempt.weight !== null && attempt.weight !== undefined)
+      .map((attempt) => attempt.weight))];
     values.sort((a, b) => a - b);
     return values;
   });
 
   const candidates = [];
-  let best = null;
   for (const squatBest of candidateWeights[0]) {
     for (const benchBest of candidateWeights[1]) {
       for (const deadBest of candidateWeights[2]) {
         const candidateTotal = squatBest + benchBest + deadBest;
         if (Math.abs(candidateTotal - reportedTotal) >= 0.26) continue;
 
-        const squatPlan = inferStatusesForGroup(attempts.squat, squatBest);
-        const benchPlan = inferStatusesForGroup(attempts.bench, benchBest);
-        const deadPlan = inferStatusesForGroup(attempts.deadlift, deadBest);
+        const squatPlan = inferStatusesForGroup(groups.squat, squatBest);
+        const benchPlan = inferStatusesForGroup(groups.bench, benchBest);
+        const deadPlan = inferStatusesForGroup(groups.deadlift, deadBest);
         if (!squatPlan || !benchPlan || !deadPlan) continue;
+        if (
+          !planRespectsKnownFailures(groups.squat, squatPlan) ||
+          !planRespectsKnownFailures(groups.bench, benchPlan) ||
+          !planRespectsKnownFailures(groups.deadlift, deadPlan)
+        ) {
+          continue;
+        }
 
-        const signature = [
-          squatPlan.statuses.map((item) => (item ? '1' : '0')).join(''),
-          benchPlan.statuses.map((item) => (item ? '1' : '0')).join(''),
-          deadPlan.statuses.map((item) => (item ? '1' : '0')).join(''),
-        ].join('|');
-
-        const score = squatPlan.score + benchPlan.score + deadPlan.score + squatBest + benchBest + deadBest;
         const candidate = {
-          score,
-          signature,
+          groups,
+          squatBest,
+          benchBest,
+          deadBest,
           squatPlan,
           benchPlan,
           deadPlan,
         };
+        candidate.score = planScoreForReportedTotalRepair(candidate);
         candidates.push(candidate);
-
-        if (!best || score > best.score) {
-          best = candidate;
-        }
       }
     }
   }
 
-  if (!best) return attempts;
+  if (!candidates.length) return attempts;
 
-  const possibleSignatures = new Set(candidates.map((candidate) => candidate.signature));
+  candidates.sort(compareReportedTotalRepairCandidates);
+  const best = candidates[0];
+  const tiedBest = candidates.filter((candidate) => compareReportedTotalRepairCandidates(candidate, best) === 0);
 
-  // Si el total permite varias lecturas, no inventamos nulos. En esos Excel
-  // antiguos hay que leer el formato real de celda rojo/tachado.
-  if (possibleSignatures.size !== 1) return attempts;
+  // If two readings are equally plausible after exact-total matching and the
+  // conservative tie-breakers above, keep the parsed attempts rather than
+  // fabricating hidden failures.
+  if (tiedBest.length > 1) return attempts;
 
   return {
     ...attempts,
-    squat: attempts.squat.map((attempt, index) => cloneAttemptWithGood(attempt, best.squatPlan.statuses[index])),
-    bench: attempts.bench.map((attempt, index) => cloneAttemptWithGood(attempt, best.benchPlan.statuses[index])),
-    deadlift: attempts.deadlift.map((attempt, index) => cloneAttemptWithGood(attempt, best.deadPlan.statuses[index])),
+    squat: groups.squat.map((attempt, index) => cloneAttemptWithGood(attempt, best.squatPlan.statuses[index])),
+    bench: groups.bench.map((attempt, index) => cloneAttemptWithGood(attempt, best.benchPlan.statuses[index])),
+    deadlift: groups.deadlift.map((attempt, index) => cloneAttemptWithGood(attempt, best.deadPlan.statuses[index])),
   };
 }
 
