@@ -403,6 +403,58 @@ test('Pablo Martínez Córdova, Copa Catalana 2023: conserva nulos visuales de E
   assert.equal(hasFailedAttempt(pablo), true);
 });
 
+test('Excel: no infiere intentos fallidos desde el total oficial si no hay señal explícita', async () => {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([
+    [],
+    ['Copa Conservadora 2026'],
+    ['Powerlifting'],
+    ['Madrid, 1 enero 2026'],
+    ['HOMBRES'],
+    ['-83kg'],
+    ['Pos', 'Levantador', 'Año', 'Club', 'Peso', 'Coef.', 'Ord.', 'Sentadilla', '', '', 'Banca', '', '', 'Peso Muerto', '', '', 'Total', 'IPF GL'],
+    [1, 'Atleta Sin Marca Visual', 1990, 'CLUB TEST', 82.4, 1, 12, 180, 190, 200, 110, 120, 125, 210, 220, 230, 540, 75.25],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Resultados');
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellStyles: true });
+
+  const entries = await parseDocument(buffer, '.xlsx', { pageTitle: 'Copa Conservadora 2026' });
+  const athlete = entries.find((entry) => entry.athleteName === 'Atleta Sin Marca Visual');
+  assert.ok(athlete);
+  assert.equal(athlete.total, 540);
+  assert.deepEqual(athlete.attempts.squat.map((attempt) => attempt.good), [true, true, true]);
+  assert.deepEqual(athlete.attempts.bench.map((attempt) => attempt.good), [true, true, true]);
+  assert.deepEqual(athlete.attempts.deadlift.map((attempt) => attempt.good), [true, true, true]);
+});
+
+test('PDF tabular: no infiere nulos desde el total oficial cuando el texto no trae marcador explícito', () => {
+  const entry = _private.parsePdfAthleteLine(
+    '-83 1 Atleta Sin Marca Visual 1990 CLUB 82,40 12 180 190 200 1 110 120 125 1 210 220 230 1 540 75,25',
+    competition('PDF conservador'),
+    'M',
+    '-83kg',
+    'powerlifting'
+  );
+
+  assert.ok(entry);
+  assert.equal(entry.total, 540);
+  assert.deepEqual(entry.attempts.squat.map((attempt) => attempt.good), [true, true, true]);
+  assert.deepEqual(entry.attempts.bench.map((attempt) => attempt.good), [true, true, true]);
+  assert.deepEqual(entry.attempts.deadlift.map((attempt) => attempt.good), [true, true, true]);
+});
+
+test('BIFF palette: detecta rojo explícito aunque el XLS use una paleta personalizada', () => {
+  const paletteRecord = Buffer.from([
+    0x01, 0x00, // one custom color
+    0xff, 0x00, 0x00, 0x00, // palette index 8 = red
+  ]);
+  const palette = _private.parseBiffPaletteRecord(paletteRecord);
+
+  assert.equal(palette.get(8), 'ff0000');
+  assert.equal(_private.paletteColorLooksRed(8, palette), true);
+  assert.equal(_private.paletteColorLooksRed(9, palette), false);
+});
+
 test('Brunno Vázquez, SBD Cup 2025: acepta Ord. grande y peso corporal correcto', () => {
   const entry = _private.parsePdfAthleteLine(
     '-93 1 Brunno Vázquez 1998 SBD CLUB 92,40 1214 250 260 270 1 170 180 190 1 280 295 305 1 765 102,50',

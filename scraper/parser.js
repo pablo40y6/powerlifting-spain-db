@@ -581,8 +581,49 @@ function fontIndexToArrayIndex(fontIndex, fonts) {
   return direct;
 }
 
-function parseBiffFontRecord(data) {
-  if (!data || data.length < 6) return { strike: false, red: false };
+function paletteColorLooksRed(colorIndex, palette) {
+  const index = Number(colorIndex);
+  if (!Number.isFinite(index)) return false;
+  if (indexedColorLooksRed(index)) return true;
+
+  const rgb = palette && palette.get(index);
+  if (!rgb) return false;
+  return colorStringLooksRed(rgb);
+}
+
+function parseBiffPaletteRecord(data) {
+  const palette = new Map();
+  if (!data || data.length < 2) return palette;
+
+  const colorCount = readUInt16Safe(data, 0) || 0;
+  for (let offset = 2, item = 0; item < colorCount && offset + 3 < data.length; item += 1, offset += 4) {
+    const red = data[offset];
+    const green = data[offset + 1];
+    const blue = data[offset + 2];
+    palette.set(8 + item, [red, green, blue].map((value) => value.toString(16).padStart(2, '0')).join(''));
+  }
+
+  return palette;
+}
+
+function updateBiffFontPaletteFlags(fonts, palette) {
+  if (!palette || !palette.size) return;
+  for (const font of fonts) {
+    if (font) font.red = paletteColorLooksRed(font.colorIndex, palette);
+  }
+}
+
+function updateBiffXfFailureFlags(xfs, fonts) {
+  for (const xf of xfs) {
+    if (!xf) continue;
+    const fontArrayIndex = fontIndexToArrayIndex(xf.fontIndex, fonts);
+    const font = fonts[fontArrayIndex] || null;
+    xf.failedAttemptStyle = Boolean(font && (font.strike || font.red));
+  }
+}
+
+function parseBiffFontRecord(data, palette = null) {
+  if (!data || data.length < 6) return { strike: false, red: false, colorIndex: null };
 
   const optionFlags = readUInt16Safe(data, 2) || 0;
   const colorIndex = readUInt16Safe(data, 4);
@@ -591,7 +632,7 @@ function parseBiffFontRecord(data) {
     // grbit bit 3 = struck out text in BIFF font records.
     strike: Boolean(optionFlags & 0x0008),
     // AEP sheets use red font for null attempts in old .xls files.
-    red: indexedColorLooksRed(colorIndex),
+    red: paletteColorLooksRed(colorIndex, palette),
     colorIndex,
   };
 }
@@ -613,6 +654,7 @@ function buildLegacyXlsFailStyleMaps(buffer) {
 
   const fonts = [];
   const xfs = [];
+  let palette = null;
   const sheetMaps = [];
   let offset = 0;
   let inWorksheet = false;
@@ -652,7 +694,11 @@ function buildLegacyXlsFailStyleMaps(buffer) {
     } else if (sid === 0x000a) {
       inWorksheet = false;
     } else if (!inWorksheet && sid === 0x0031) {
-      fonts.push(parseBiffFontRecord(data));
+      fonts.push(parseBiffFontRecord(data, palette));
+    } else if (!inWorksheet && sid === 0x0092) {
+      palette = parseBiffPaletteRecord(data);
+      updateBiffFontPaletteFlags(fonts, palette);
+      updateBiffXfFailureFlags(xfs, fonts);
     } else if (!inWorksheet && sid === 0x00e0) {
       xfs.push(parseBiffXfRecord(data, fonts));
     } else if (inWorksheet) {
@@ -1081,21 +1127,7 @@ function parseExcelDocument(buffer, baseMeta) {
 
       const reportedTotal = currentLayout.totalIndex >= 0 ? parseLocaleNumber(row[currentLayout.totalIndex]) : null;
       const movementRanks = movementRanksFromExcelRow(row, currentLayout);
-      let attempts = attemptsObjectFromExcelRow(row, currentLayout, cells, workbook, legacyFailMap, rowData.excelRowIndex);
-
-      // Algunos Excel antiguos de AEP no guardan los nulos con signo negativo:
-      // visualmente aparecen en rojo/tachado, pero al extraer el valor solo queda
-      // el numero positivo. Para no depender de que SheetJS conserve estilos,
-      // reconstruimos los nulos comparando los intentos con el total oficial.
-      if (currentLayout.liftType === 'powerlifting') {
-        attempts = repairAttemptsUsingReportedTotal(attempts, reportedTotal);
-      } else if (['squat', 'bench', 'deadlift'].includes(currentLayout.liftType)) {
-        attempts = repairSingleLiftAttemptsUsingReportedTotal(
-          attempts,
-          currentLayout.liftType,
-          reportedTotal
-        );
-      }
+      const attempts = attemptsObjectFromExcelRow(row, currentLayout, cells, workbook, legacyFailMap, rowData.excelRowIndex);
 
       const entry = makeAthleteEntry({
         competition,
@@ -1119,7 +1151,7 @@ function parseExcelDocument(buffer, baseMeta) {
     }
   }
 
-  return repairEntriesUsingMovementRanks(entries);
+  return entries;
 }
 
 
@@ -2274,7 +2306,7 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
 
   const attempts = isSingleLift
     ? attemptsObjectForLiftType(rebuiltAttemptTokens, liftType)
-    : repairAttemptsUsingReportedTotal(attemptsObjectFromList(rebuiltAttemptTokens), total);
+    : attemptsObjectFromList(rebuiltAttemptTokens);
 
   return makeAthleteEntry({
     competition,
@@ -2363,7 +2395,7 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
 
   const attempts = isSingleLift
     ? attemptsObjectForLiftType(rebuiltAttemptTokens, liftType)
-    : repairAttemptsUsingReportedTotal(attemptsObjectFromList(rebuiltAttemptTokens), total);
+    : attemptsObjectFromList(rebuiltAttemptTokens);
 
   return makeAthleteEntry({
     competition,
@@ -2406,7 +2438,7 @@ function parsePdfText(rawText, baseMeta) {
   if (goodliftText) {
     const goodliftEntries = parseGoodliftDetailedScoresheetLines(lines, competition, metadataSex, category);
     if (goodliftEntries.length > 0) {
-      return repairEntriesUsingMovementRanks(goodliftEntries);
+      return goodliftEntries;
     }
   }
 
@@ -2442,7 +2474,7 @@ function parsePdfText(rawText, baseMeta) {
     if (athlete) entries.push(athlete);
   }
 
-  return repairEntriesUsingMovementRanks(entries);
+  return entries;
 }
 
 async function parsePdfDocument(buffer, baseMeta) {
@@ -2707,5 +2739,7 @@ module.exports = {
     sanitizeAttemptsForIncompleteResult,
     normalizeAuditableAttempts,
     buildExcelLayoutFromHeaderRow,
+    parseBiffPaletteRecord,
+    paletteColorLooksRed,
   },
 };
