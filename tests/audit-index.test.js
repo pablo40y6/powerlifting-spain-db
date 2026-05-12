@@ -234,3 +234,82 @@ test('category_bodyweight_mismatch mantiene warnings para categorías demasiado 
   assert.equal(byRowKey.get('m53-extreme-low')?.expected, '-120kg');
   assert.equal(byRowKey.get('m120-extreme-high')?.expected, '-83kg');
 });
+
+test('total oficial menor que la suma de intentos conserva total_attempt_sum_mismatch sin reclasificar', () => {
+  const report = auditIndex({
+    entries: [entry({
+      rowKey: 'official-total-lower-than-attempts',
+      resultsLabel: 'Resultados conservadores',
+      total: 650,
+      attempts: {
+        squat: [{ weight: 250, good: true }],
+        bench: [{ weight: 150, good: true }],
+        deadlift: [{ weight: 260, good: true }],
+      },
+    })],
+  });
+
+  const types = findingTypes(report);
+  assert.equal(types.filter((type) => type === 'total_attempt_sum_mismatch').length, 1);
+  assert.equal(types.includes('suspected_missing_failed_attempt_marker'), false);
+  assert.equal(report.summary.warnings, 1);
+  assert.equal(report.summary.byType.total_attempt_sum_mismatch.total, 1);
+  assert.equal(report.summary.byType.suspected_missing_failed_attempt_marker, undefined);
+});
+
+test('debug totalAttemptSumMismatch agrega conteos, diffs, grupos y ejemplos limitados', () => {
+  const report = auditIndex({
+    entries: [
+      entry({
+        rowKey: 'mismatch-a',
+        athleteName: 'Atleta A',
+        resultsUrl: 'https://example.com/results-a.pdf',
+        resultsLabel: 'Resultados A',
+        competitionYear: 2025,
+        total: 650,
+      }),
+      entry({
+        rowKey: 'mismatch-b',
+        athleteName: 'Atleta B',
+        resultsUrl: 'https://example.com/results-a.pdf',
+        resultsLabel: 'Resultados A',
+        competitionYear: 2025,
+        total: 640,
+      }),
+      entry({
+        rowKey: 'mismatch-c',
+        athleteName: 'Atleta C',
+        resultsUrl: 'https://example.com/results-b.pdf',
+        resultsLabel: 'Resultados B',
+        competitionYear: 2024,
+        total: 670,
+      }),
+    ],
+  }, { totalAttemptSumMismatchExampleLimit: 1 });
+
+  assert.equal(report.debug.totalAttemptSumMismatch.count, 3);
+  assert.deepEqual(report.debug.totalAttemptSumMismatch.diffDistribution, {
+    '-10': 1,
+    '10': 1,
+    '20': 1,
+  });
+
+  const firstGroup = report.debug.totalAttemptSumMismatch.groups.find((group) => group.resultsLabel === 'Resultados A');
+  assert.ok(firstGroup);
+  assert.equal(firstGroup.count, 2);
+  assert.deepEqual(firstGroup.diffDistribution, { '10': 1, '20': 1 });
+  assert.equal(firstGroup.examples.length, 1);
+  assert.deepEqual(Object.keys(firstGroup.examples[0]), [
+    'athleteName',
+    'competitionName',
+    'category',
+    'bodyweight',
+    'total',
+    'parsedBestAttemptSum',
+    'diff',
+    'attempts',
+    'resultsUrl',
+  ]);
+  assert.equal(firstGroup.examples[0].parsedBestAttemptSum, 660);
+  assert.equal(firstGroup.examples[0].diff, 10);
+});

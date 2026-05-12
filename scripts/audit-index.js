@@ -388,6 +388,85 @@ function auditLinks(entry) {
   return findings;
 }
 
+function diffKey(value) {
+  return Number(value.toFixed(2)).toString();
+}
+
+function summarizeAttempts(entry) {
+  return Object.fromEntries(Object.entries(getAttemptGroups(entry)).map(([movement, attempts]) => [
+    movement,
+    attempts.map((attempt) => ({
+      weight: attempt?.weight ?? null,
+      good: attempt?.good ?? null,
+    })),
+  ]));
+}
+
+function buildTotalAttemptSumMismatchDebug(entries, options = {}) {
+  const exampleLimit = options.exampleLimit || 5;
+  const groups = new Map();
+  const diffDistribution = {};
+  let count = 0;
+
+  for (const entry of entries) {
+    const total = toNumber(entry.total);
+    const eventType = entry.eventType || entry.liftType || 'powerlifting';
+    if (total === null || total <= 0 || eventType !== 'powerlifting' || !hasValidPowerliftingTotalFromAttempts(entry)) continue;
+
+    const parsedBestAttemptSum = computedPowerliftingTotal(entry);
+    if (Math.abs(total - parsedBestAttemptSum) <= EPSILON) continue;
+
+    const diff = Number((parsedBestAttemptSum - total).toFixed(2));
+    const diffBucket = diffKey(diff);
+    diffDistribution[diffBucket] = (diffDistribution[diffBucket] || 0) + 1;
+    count += 1;
+
+    const groupKey = JSON.stringify({
+      resultsUrl: entry.resultsUrl || null,
+      resultsLabel: entry.resultsLabel || null,
+      competitionYear: entry.competitionYear ?? null,
+    });
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        resultsUrl: entry.resultsUrl || null,
+        resultsLabel: entry.resultsLabel || null,
+        competitionYear: entry.competitionYear ?? null,
+        count: 0,
+        diffDistribution: {},
+        examples: [],
+      });
+    }
+
+    const group = groups.get(groupKey);
+    group.count += 1;
+    group.diffDistribution[diffBucket] = (group.diffDistribution[diffBucket] || 0) + 1;
+    if (group.examples.length < exampleLimit) {
+      group.examples.push({
+        athleteName: entry.athleteName || null,
+        competitionName: entry.competitionName || null,
+        category: entry.category || null,
+        bodyweight: entry.bodyweight ?? null,
+        total,
+        parsedBestAttemptSum,
+        diff,
+        attempts: summarizeAttempts(entry),
+        resultsUrl: entry.resultsUrl || null,
+      });
+    }
+  }
+
+  return {
+    count,
+    diffDistribution: Object.fromEntries(Object.entries(diffDistribution).sort((a, b) => Number(a[0]) - Number(b[0]))),
+    groups: Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        diffDistribution: Object.fromEntries(Object.entries(group.diffDistribution).sort((a, b) => Number(a[0]) - Number(b[0]))),
+      }))
+      .sort((a, b) => b.count - a.count || String(a.resultsUrl || '').localeCompare(String(b.resultsUrl || ''))),
+  };
+}
+
 function buildRegressionSection(entries) {
   const byName = new Map();
   for (const entry of entries) {
@@ -451,6 +530,11 @@ function auditIndex(index, options = {}) {
       errors: findings.filter((finding) => finding.severity === 'error').length,
       byType,
     },
+    debug: {
+      totalAttemptSumMismatch: buildTotalAttemptSumMismatchDebug(entries, {
+        exampleLimit: options.totalAttemptSumMismatchExampleLimit,
+      }),
+    },
     regression: buildRegressionSection(entries),
     findings,
   };
@@ -487,6 +571,17 @@ function renderMarkdown(report) {
   for (const athlete of report.regression.athletes) lines.push(`- ${athlete.athleteName}: ${athlete.count}`);
   lines.push(`- Aranda 2026 encontrado: ${report.regression.aranda.has2026Result ? 'sí' : 'no'}`);
   for (const [check, ok] of Object.entries(report.regression.aranda.checks || {})) lines.push(`  - ${check}: ${ok ? 'OK' : 'REVISAR'}`);
+  const mismatchDebug = report.debug?.totalAttemptSumMismatch;
+  if (mismatchDebug) {
+    lines.push('', '## Debug total_attempt_sum_mismatch', '');
+    lines.push(`- Total: ${mismatchDebug.count}`);
+    lines.push(`- Distribución diff: ${JSON.stringify(mismatchDebug.diffDistribution)}`);
+    lines.push('', '| Año | Resultados | Count | Diffs |');
+    lines.push('| ---: | --- | ---: | --- |');
+    for (const group of mismatchDebug.groups.slice(0, 20)) {
+      lines.push(`| ${group.competitionYear ?? ''} | ${group.resultsLabel || group.resultsUrl || 'sin resultados'} | ${group.count} | ${JSON.stringify(group.diffDistribution)} |`);
+    }
+  }
   lines.push('', '## Top 20 problemas', '');
   for (const finding of topFindings(report.findings)) {
     lines.push(`- **${finding.severity.toUpperCase()}** ${finding.type}: ${finding.message} (${finding.athleteName || 'sin atleta'} · ${finding.competitionName || 'sin competición'} · ${finding.rowKey || 'sin rowKey'})`);
@@ -542,6 +637,7 @@ module.exports = {
   looksLikeClubAthleteName,
   approximateDuplicateKey,
   buildRegressionSection,
+  buildTotalAttemptSumMismatchDebug,
   normalizeCategory,
   flattenEntries,
 };
