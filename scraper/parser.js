@@ -114,11 +114,17 @@ const VERIFIED_RESULT_CATEGORIES = {
     // Inscripcion_AEP-1-MAS-MASTERS_Almensilla-Sevilla_2025-06-10.pdf:
     // banca M4, -93 kg. El acta omite la categoría y registra 89,84 kg.
     'riso salgado luis antonio': { eventType: 'bench', bodyweight: 89.84, recorded: null, category: '-93kg' },
+    // PESAJE_AEP-1-MASTERS_OPEN-EQUIP_Almensilla-Sevilla_2025.pdf:
+    // dorsal 34, banca M2, -76 kg. El acta confirma el dorsal y 72,48 kg.
+    'mejias tenes maria mercedes': { eventType: 'bench', bodyweight: 72.48, recorded: '-69kg', category: '-76kg' },
   },
   'https://powerliftingspain.es/aep-1-campeonato-de-espana-masters-huercal-overa-almeria-2024/': {
     // PESAJE_AEP-1_Masters_Huercal-Overa_2024-07-03-1.pdf: dorsal 1, -47 kg.
     // Coincide con la inscripción y los 46,20 kg registrados en el acta.
     'tancredi garcia silvana': { eventType: 'powerlifting', bodyweight: 46.2, recorded: '-63kg', category: '-47kg' },
+    // PESAJE_AEP-1_Masters_Huercal-Overa_2024-07-03-1.pdf:
+    // dorsal 9, banca M4, -83 kg. La nota AI sigue en el resultado.
+    'trojanouwski serge': { eventType: 'bench', bodyweight: 81.62, recorded: '-74kg', category: '-83kg' },
   },
 };
 
@@ -2690,6 +2696,10 @@ function parsePdfText(rawText, baseMeta) {
 // El PDF dibuja los tachados por separado. Estas filas se cotejaron con el
 // acta visible. El total y los pesos protegen contra revisiones de la fila.
 const PDF_VERIFIED_FAILED_ATTEMPTS = {
+  'https://powerliftingspain.es/wp-content/uploads/2025/06/Clasificacion-FEM_AEP-1-MASTERS_Almensilla-Sevilla_2025.pdf': {
+    // Pág. 2: la banca de 55 kg está tachada en negro. La de 52,5 kg es válida.
+    'sanchez burgos ana isabel': { total: 237.5, attempts: { bench: [52.5, -55, -57.5] } },
+  },
   'https://powerliftingspain.es/wp-content/uploads/2026/05/Absoluto-Masters-Hombres-v2.pdf': {
     'alamillo bartolome javier': { total: 370, attempts: { bench: [80, 85, -92.5] } },
     'pajuelo munoz angel luis': { total: 595, attempts: { squat: [-200, 200, 215], deadlift: [225, 240, -245] } },

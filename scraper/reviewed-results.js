@@ -17,7 +17,6 @@ const decisions = {
     "david garcia gomez": ["2022/04/Clasificacion_AEP-3_Entrena_Intenso_Rivas-Vaciamadrid_2022_mas.pdf", "powerlifting", 90.33, "-93kg", "5", 525, 69.67, true, 527.5],
     "norocel norocel bianca elena": ["2024/07/Clasificaciones_AEP-1_SUBJUNIOR_Gines_Sevilla_2024-07-30.xls", "powerlifting", 54.6, "-57kg", "10", 255, 61.84, true, 250],
     "perez chorda mariola corega": ["2024/11/Clasificacion_AEP-1_Copa_MASTERs_Chiva-Valencia_2024-1.xls", "powerlifting", 60.26, "-63kg", "1", 255, 57.48, true, 247.5],
-    "sanchez burgos ana isabel": ["2025/06/Clasificacion_AEP-1-MASTERS_Almensilla-Sevilla_2025.xlsx", "powerlifting", 68.5, "-69kg", "2", 237.5, 36.31, true, 240],
   },
   unclassified_placing: {
     "diaz martin adrian": ["2026/11/Resultados-AEP2-IV-Campeonato-de-Canarias.pdf", "powerlifting", 103.7, "-105kg", "3", 0, 0, false],
@@ -30,8 +29,6 @@ const decisions = {
     "garcia seller jose manuel": ["2025/02/Clasificacion_AEP-3_Fuerza-Isabel-Atlas_Chiva_2025.xls", "bench", 92.25, "-93kg", "DQ", 130, 61.84, false],
   },
   conflicting_category: {
-    "mejias tenes maria mercedes": ["2025/06/Clasificacion_AEP-1-MASTERS_Almensilla-Sevilla_2025.xlsx", "bench", 72.48, "-69kg", "1", 70, 54.69, true],
-    "trojanouwski serge": ["2024/07/Clasificacion_AEP-1_Masters_Huercal-Overa_2024-07-19.xls", "bench", 81.62, "-74kg", "AI", 115, 58.25900000000001, true],
     "valladolid velasques leire sofia": ["2024/03/Clasificaciones_AEP-2_Reino_Toledo_AEP-3_Berserkers_Viso-San-Juan_2024.xls", "powerlifting", 75, "-69kg", "6", 250, 49.6, true],
   },
 };

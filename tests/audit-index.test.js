@@ -444,15 +444,19 @@ test('una discrepancia de total contrastada queda fuera del ranking y conserva l
 
 test('una categoria incompatible solo se retira con una revisión de origen verificable', () => {
   const original = entry({
-    athleteName: 'Trojanouwski Serge', bodyweight: 81.62, category: '-74kg',
-    placing: 'AI', eventType: 'bench', total: 115, ipfgl: 58.25900000000001,
-    attempts: { bench: [{ weight: 115, good: true }] },
-    competitionYear: 2024, competitionDate: '2024-07-13',
-    resultsUrl: 'https://powerliftingspain.es/wp-content/uploads/2024/07/Clasificacion_AEP-1_Masters_Huercal-Overa_2024-07-19.xls',
+    athleteName: 'Valladolid Velasques Leire Sofia', sex: 'F', bodyweight: 75, category: '-69kg',
+    placing: '6', total: 250, ipfgl: 49.6,
+    attempts: {
+      squat: [{ weight: 92.5, good: true }],
+      bench: [{ weight: 42.5, good: true }],
+      deadlift: [{ weight: 115, good: true }],
+    },
+    competitionYear: 2024, competitionDate: '2024-02-24',
+    resultsUrl: 'https://powerliftingspain.es/wp-content/uploads/2024/03/Clasificaciones_AEP-2_Reino_Toledo_AEP-3_Berserkers_Viso-San-Juan_2024.xls',
   });
   const reviewed = reviewResult(original);
   assert.equal(reviewed.category, null);
-  assert.equal(reviewed.sourceReview.published.category, '-74kg');
+  assert.equal(reviewed.sourceReview.published.category, '-69kg');
   const report = auditIndex([reviewed]);
   assert.equal(report.summary.errors, 0);
   assert.equal(report.summary.warnings, 0);
