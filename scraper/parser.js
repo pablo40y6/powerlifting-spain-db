@@ -109,6 +109,19 @@ function hasValidPowerliftingTotal(attempts, eventType) {
   );
 }
 
+const VERIFIED_RESULT_CATEGORIES = {
+  'https://powerliftingspain.es/aep-1-campeonato-de-espana-masters-almensilla-sevilla-2025/': {
+    // Inscripcion_AEP-1-MAS-MASTERS_Almensilla-Sevilla_2025-06-10.pdf:
+    // banca M4, -93 kg. El acta omite la categoría y registra 89,84 kg.
+    'riso salgado luis antonio': { eventType: 'bench', bodyweight: 89.84, recorded: null, category: '-93kg' },
+  },
+  'https://powerliftingspain.es/aep-1-campeonato-de-espana-masters-huercal-overa-almeria-2024/': {
+    // PESAJE_AEP-1_Masters_Huercal-Overa_2024-07-03-1.pdf: dorsal 1, -47 kg.
+    // Coincide con la inscripción y los 46,20 kg registrados en el acta.
+    'tancredi garcia silvana': { eventType: 'powerlifting', bodyweight: 46.2, recorded: '-63kg', category: '-47kg' },
+  },
+};
+
 function makeAthleteEntry({
   competition,
   sex,
@@ -128,7 +141,13 @@ function makeAthleteEntry({
   isIndividualResult = true,
 }) {
   const athleteName = normalizeSpaces(lifterName);
+  const athleteNameNormalized = normalizeName(athleteName);
   const eventType = liftType || 'powerlifting';
+  const verifiedCategory = VERIFIED_RESULT_CATEGORIES[competition?.meetPageUrl]?.[athleteNameNormalized];
+  category = formatCategoryToken(category) || null;
+  if (verifiedCategory?.eventType === eventType && verifiedCategory.bodyweight === bodyweight && verifiedCategory.recorded === category) {
+    category = verifiedCategory.category;
+  }
   placing = normalizeSpaces(placing).replace(/[ºª.]$/, '') || null;
   total = Number.isFinite(total) && total >= 0 ? total : null;
   ipfgl = Number.isFinite(ipfgl) && ipfgl >= 0 ? ipfgl : null;
@@ -142,9 +161,9 @@ function makeAthleteEntry({
 
   return {
     athleteName,
-    athleteNameNormalized: normalizeName(athleteName),
+    athleteNameNormalized,
     sex: sex || null,
-    category: formatCategoryToken(category) || null,
+    category,
     placing: placing || null,
     yearOfBirth: yearOfBirth || null,
     club: club || null,
@@ -2340,6 +2359,15 @@ function singleLiftPdfAttempts(tokens, liftType) {
 
 function resolvePdfRowStats(tokens, placing, liftType, bodyweightOrder, hasPointsColumn) {
   const fields = tokens.slice(bodyweightOrder.attemptsStartIndex);
+  // AEP sheets with movement ranks can show blank score cells as dashes,
+  // or print DSQ in the total column. The attempts still have fixed positions.
+  if (liftType === 'powerlifting' && fields.length === 15 &&
+      (/^[-–—]+$/.test(placing || '') || NON_FINISHING_PLACING.test(placing)) &&
+      (/^[-–—]+$/.test(fields[12]) || NON_FINISHING_PLACING.test(fields[12])) &&
+      fields.slice(13).every((field) => /^[-–—]+$/.test(field))) {
+    return { total: null, ipfgl: null, statsStartIndex: bodyweightOrder.attemptsStartIndex + 12 };
+  }
+
   // Compact AEP sheets omit trailing score cells for DQ rows. The remaining
   // fields are nine signed attempts and, in some sheets, a total without GL.
   if (
@@ -2577,7 +2605,8 @@ function parsePdfText(rawText, baseMeta) {
 
   const entries = [];
   let category = null;
-  const metadataSex = sexFromResultsDocument(baseMeta) || meta.sex || sexFromText(baseMeta?.pageTitle);
+  const documentSex = sexFromResultsDocument(baseMeta);
+  const metadataSex = documentSex || meta.sex || sexFromText(baseMeta?.pageTitle);
   let currentSex = metadataSex;
 
   if (goodliftText) {
@@ -2646,9 +2675,13 @@ function parsePdfText(rawText, baseMeta) {
       continue;
     }
 
-    if (!isPotentialAthleteLine(line)) continue;
+    // Unranked rows with blank scores are safe to recover from sex-specific
+    // acts. Mixed acts may place the sex headings out of order in the PDF text.
+    const startsWithUnrankedPlacing = /^[-–—]+\s/.test(line);
+    const canRecoverUnrankedRow = startsWithUnrankedPlacing && documentSex && currentSex === documentSex && hasPointsColumn;
+    if (!canRecoverUnrankedRow && !isPotentialAthleteLine(line)) continue;
     const athlete = parsePdfAthleteLine(originalLine, competition, currentSex, category, sectionLiftType, hasCategoryColumn, hasPointsColumn);
-    if (athlete) entries.push(athlete);
+    if (athlete && (!startsWithUnrankedPlacing || (athlete.total === null && athlete.ipfgl === null))) entries.push(athlete);
   }
 
   return repairEntriesUsingMovementRanks(entries);

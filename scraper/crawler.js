@@ -26,6 +26,19 @@ const SEED_YEAR_PAGES = [2026, 2025, 2024, 2023, 2022, 2021].map(
   (year) => `https://powerliftingspain.es/campeonatos-${year >= 2023 ? 'ano-' : ''}${year}/`
 );
 
+// El enlace de la ficha de Andújar conserva el nombre anterior a la
+// republicación del PDF en la biblioteca de medios de la AEP.
+const RESULTS_DOCUMENT_ALIASES = new Map([
+  [
+    'https://powerliftingspain.es/wp-content/uploads/2022/08/Clasificaciones_AEP-2_Regional_Andalucia_Andujar_2021_power_mas.pdf',
+    'https://powerliftingspain.es/wp-content/uploads/2022/08/Clasificaciones_AEP-2_Regional_Andalucia_Andujar_2021_power_mas-1.pdf',
+  ],
+]);
+
+function canonicalResultsDocumentUrl(url) {
+  return RESULTS_DOCUMENT_ALIASES.get(url) || url;
+}
+
 function calculateProgressPercent(state) {
   if (state.phase === 'done') return 100;
 
@@ -99,8 +112,9 @@ function discoverCompetitionPages(html, pageUrl) {
 
     const ext = getExtension(href);
     if (['.pdf', '.xls', '.xlsx'].includes(ext) && isLikelyResultsDocument(text, href)) {
-      directDocs.set(href, {
-        url: href,
+      const url = canonicalResultsDocumentUrl(href);
+      directDocs.set(url, {
+        url,
         label: text || path.basename(href),
         discoveredOn: pageUrl,
       });
@@ -159,7 +173,8 @@ function extractDocumentsFromCompetitionPage(html, pageUrl) {
     const { label, context } = buildDocumentLabel($, el);
     if (!isLikelyResultsDocument(context || label, href)) return;
 
-    docs.set(href, { url: href, label: label || path.basename(href) });
+    const url = canonicalResultsDocumentUrl(href);
+    docs.set(url, { url, label: label || path.basename(url) });
   });
 
   return Array.from(docs.values());

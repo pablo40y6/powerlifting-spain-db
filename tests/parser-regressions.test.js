@@ -853,3 +853,28 @@ test('PDF interpreta un bloque de solo banca entre categorias de powerlifting', 
     ['bench', 175, true], ['powerlifting', 175, true],
   ]);
 });
+
+test('Andújar 2021 resuelve y deduplica el enlace antiguo del PDF oficial masculino', () => {
+  const page = 'https://powerliftingspain.es/aep-2-regional-andalucia-andujar_jaen-2021/';
+  const stem = '/wp-content/uploads/2022/08/Clasificaciones_AEP-2_Regional_Andalucia_Andujar_2021';
+  const html = `
+    <h2>Clasificaciones</h2>
+    <a href="${stem}_power_mas.pdf">Clasificación Power hombres</a>
+    <a href="${stem}_power_mas-1.pdf">Clasificación Power hombres</a>
+    <a href="${stem}-1.xls">Clasificaciones Excel</a>
+  `;
+  const expected = [`https://powerliftingspain.es${stem}_power_mas-1.pdf`, `https://powerliftingspain.es${stem}-1.xls`];
+  assert.deepEqual(crawlerPrivate.extractDocumentsFromCompetitionPage(html, page).map((doc) => doc.url), expected);
+  assert.deepEqual(crawlerPrivate.discoverCompetitionPages(html, page).directDocs.map((doc) => doc.url), expected);
+});
+
+test('PDF de Andújar conserva la fila con intentos y las casillas de total e IPF GL vacías', () => {
+  const fixture = [
+    'HOMBRES POWERLIFTING RAW', 'LEVANTADOR AÑO CLUB PESO COEF. Ord. TOTAL IPF GL Pt.', '-105kg',
+    '— Atleta de Prueba 1997 FGUAN 98,03 0,1275 102 225,0 230,0 230,0 — 150,0 160,0 X 3 X X X — DSQ — —',
+  ].join('\n');
+  const [entry] = _private.parsePdfText(fixture, { ...competition(), resultsLabel: 'Clasificación Power hombres' });
+  assert.deepEqual([entry.athleteName, entry.bodyweight, entry.category, entry.total, entry.ipfgl, entry.isRankable],
+    ['Atleta de Prueba', 98.03, '-105kg', null, null, false]);
+  assert.deepEqual(entry.attempts.bench.map((attempt) => attempt.weight), [150, 160, null]);
+});
