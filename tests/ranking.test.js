@@ -1,11 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { todayInSpain, expiresOn, topRanking } = require('../web/ranking');
-const XLSX = require('xlsx');
 const {
-  openPowerliftingResults, ipfResults, alignInternationalNames, findAepInternationalMeets,
+  ipfResults, alignInternationalNames, findAepInternationalMeets,
   aepInternationalLinks, connectAepInternationalPages, classifyAepInternational, mergeInternationalResults, assignRankingIdentities,
 } = require('../scraper/international');
+const { parsePdfScoreRows } = require('../scraper/federation-scoresheets');
 
 test('la vigencia usa meses naturales y el día de España', () => {
   assert.equal(expiresOn('2025-08-31'), '2027-02-28');
@@ -51,27 +51,6 @@ test('el ranking se limita a 50 atletas de la categoría y ordena por marca', ()
   assert.equal(ranked.at(-1).value, 315);
 });
 
-test('el archivo abierto filtra ESP y conserva la referencia al acta de la EPF', () => {
-  const archive = XLSX.CFB.utils.cfb_new();
-  XLSX.CFB.utils.cfb_add(archive, 'meet-data/epf/2604/meet.csv', Buffer.from(
-    'Federation,Date,MeetCountry,MeetTown,MeetName\nEPF,2026-03-15,Malta,St Julians,European Open Classic Powerlifting Championships'
-  ));
-  XLSX.CFB.utils.cfb_add(archive, 'meet-data/epf/2604/URL', Buffer.from(
-    'https://www.europowerlifting.org/results/2026'
-  ));
-  XLSX.CFB.utils.cfb_add(archive, 'meet-data/epf/2604/entries.csv', Buffer.from(
-    'Name,Sex,BirthYear,Country,Event,Equipment,WeightClassKg,BodyweightKg,Place,Best3SquatKg,Best3BenchKg,Best3DeadliftKg,TotalKg\n' +
-    'Fernandez Arcas Alvaro,M,1989,Spain,SBD,Raw,66,65.60,3,247.5,152.5,252.5,652.5\n' +
-    'Atleta Francés,M,1989,France,SBD,Raw,66,65.60,4,247.5,152.5,252.5,652.5'
-  ));
-  const [entry, extra] = openPowerliftingResults(XLSX.CFB.write(archive, { type: 'buffer', fileType: 'zip' }), 'EPF', [2026]);
-  assert.equal(extra, undefined);
-  assert.deepEqual([entry.country, entry.category, entry.total, entry.ipfgl, entry.isRankable], ['ESP', '-66kg', 652.5, 102.04, true]);
-  assert.deepEqual(entry.competition.officialResultsUrls, ['https://www.europowerlifting.org/results/2026']);
-  assert.equal(entry.bestLifts.bench, 152.5);
-  assert.equal(alignInternationalNames([entry], [{ ...entry, athleteName: 'Álvaro Fernández Arcas', athleteNameNormalized: 'alvaro fernandez arcas' }])[0].athleteName, 'Álvaro Fernández Arcas');
-});
-
 test('el acta IPF de banca usa la columna de banca y conserva los nulos', () => {
   const html = `<div><h4>2026 IPF World Classic Bench Press Championships</h4><p>23 May - 31 May 2026</p></div>
     <h2>WOMEN - OPEN</h2><table><tr><td>69kg</td></tr><tr><td>1</td><td><a>Atleta Prueba</a></td>
@@ -81,6 +60,30 @@ test('el acta IPF de banca usa la columna de banca y conserva los nulos', () => 
     <td>X</td><td>X</td><td>X</td><td>-</td><td>-</td><td>12</td><td>47.5</td><td>1</td></tr></table>`;
   const [entry] = ipfResults(html, 'https://ipf.powerlifting.sport/results/view/1');
   assert.deepEqual([entry.total, entry.ipfgl, entry.attempts.bench[1].good, entry.eventType], [95, 47.5, false, 'bench']);
+});
+
+test('el acta europea conserva el tachado y exige que los tres mejores válidos sumen el total', () => {
+  const row = (values, failures = []) => values.map((text, index) => ({ text, failed: failures.includes(index) }));
+  const marks = ['65,60', '0,15649', '7', '230', '240', '247,5', '3', '145', '152,5', '155', '3',
+    '240', '252,5', '252,5', '5', '652,5', '102,04', '8'];
+  const rows = [
+    row(['European Open Classic Powerlifting Championships']),
+    row(['15-22.03.2026']),
+    row(['66 kg']),
+    row(['3.', 'Fernandez Arcas Alvaro', '1989', 'ESP', ...marks], [13, 17]),
+    row(['4.', 'Atleta de Francia', '1989', 'FRA', ...marks], [13, 17]),
+    row(['5.', 'Total incorrecto', '1989', 'ESP', ...marks], [17]),
+  ];
+  const results = parsePdfScoreRows(rows, {
+    fed: 'EPF', year: 2026, header: 'Men',
+    title: 'European Open Classic Powerlifting Championships',
+    url: 'https://www.europowerlifting.org/fileadmin/data/results/2026/open-classic/detailed_scoresheet_m.pdf',
+  });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].competition.date, '2026-03-15');
+  assert.equal(results[0].attempts.bench[2].good, false);
+  assert.equal(results[0].total, 652.5);
+  assert.deepEqual(results[0].bestLifts, { squat: 247.5, bench: 152.5, deadlift: 252.5 });
 });
 
 test('el calendario internacional de la AEP enlaza el acta y se prioriza sobre la copia', () => {
@@ -102,7 +105,7 @@ test('el calendario internacional de la AEP enlaza el acta y se prioriza sobre l
     competition: { date: meet.date, year: 2026, meetPageUrl: meet.url, resultsUrl: 'https://powerliftingspain.es/acta.xls' },
   };
   const external = { ...local, athleteNameNormalized: 'alvaro fernandez arcas', country: 'ESP',
-    sourceFederation: 'EPF', competition: { date: meet.date, year: 2026, resultsUrl: 'https://www.openpowerlifting.org/m/epf/2604' } };
+    sourceFederation: 'EPF', competition: { date: meet.date, year: 2026, resultsUrl: 'https://www.europowerlifting.org/fileadmin/data/results/2026/open-classic/detailed_scoresheet_m.pdf' } };
   const [matched] = connectAepInternationalPages([external], [meet]);
   assert.equal(matched.competition.meetPageUrl, meet.url);
   assert.deepEqual(matched.competition.officialResultsUrls, ['https://goodlift.info/onecompetition.php?cid=1151']);

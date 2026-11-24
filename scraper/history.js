@@ -16,6 +16,9 @@ const LIFTS = { squat: 'S', bench: 'B', deadlift: 'D' };
 const OFFICIAL_HOSTS = /^(?:www\.)?(?:powerhispania\.net|powerliftingspain\.es)$/i;
 const NO_RESULT = /^(?:dt|dq|dsq|dns|dnf|descalificado|retirado|no presentado)$/i;
 const ARCHIVE_FIXES = {
+  '2017/Power_Orgiva_mujeres_Raw_2016.htm|Mujeres Raw': '2017/Power_Raw_Fem_Salamanca_2017.htm',
+  '2017/Power_Orgiva_hombres_Raw_2016.htm|Hombres Raw': '2017/Power_Raw_Mas_Salamanca_2017.htm',
+  '2017/Power_Orgiva_hombres_Equip_2016.htm|Hombres Equipado': '2017/Power_Equip_Salamanca_2017.htm',
   '2019/NorOeste_Power_Fem_2019.htm|Hombres': '2019/Noroeste_Power_Mas_2019.htm',
   '2020/NorOeste_Power_Leon_Fem.htm|Mujeres': '2020/Noroeste_Power_Leon_Fem.htm',
   '2020/NorOeste_Power_Leon_Mas.htm|Hombres': '2020/Noroeste_Power_Leon_Mas.htm',
@@ -137,10 +140,10 @@ function historicalEquipment(text) {
 }
 
 function liftHeading(value) {
-  const text = normalizeName(value);
+  const text = normalizeName(value).replace(/^all /, '');
   if (/^(?:sentadillas?|sent|squat|sq)(?:\b|\d)/.test(text)) return 'squat';
   if (/^(?:press (?:de )?banca|p banca|banca|bench|pb|p b)(?:\b|\d)/.test(text)) return 'bench';
-  if (/^(?:peso (?:muerto|m)|deadlift|pm|p (?:m|muerto))(?:\b|\d)/.test(text)) return 'deadlift';
+  if (/^(?:peso (?:muerto|m)|dead\s*lift|pm|p (?:m|muerto))(?:\b|\d)/.test(text)) return 'deadlift';
   return null;
 }
 
@@ -167,16 +170,16 @@ function findLayout(row, previous, context) {
   const names = row.map((cell) => normalizeName(cell.value));
   const above = previous?.map((cell) => normalizeName(cell.value)) || [];
   const index = (pattern) => names.findIndex((cell) => pattern.test(cell));
-  const person = /^(?:nombre(?: y apellidos)?|apellidos(?: y nombre)?|levantador[ae]?(?:s)?|deportista|competidor[ae]?|resultados|femenino|masculino|mujeres|hombres|feminas)(?: \d+)?$/;
-  const weighing = /^(?:peso(?: corporal)?(?: kg)?|p corp(?:oral)?|p corporal kg)$/;
+  const person = /^(?:nombre(?: y apellidos)?|apellidos(?: y nombre)?|levantador[ae]?(?:s)?|deportista|competidor[ae]?|resultados|femenino|masculino|mujeres|hombres|feminas|name|lifters?)(?: \d+)?$/;
+  const weighing = /^(?:peso(?: corporal)?(?: kg)?|p corp(?:oral)?|p corporal kg|weight|bw|bwt|bodyweight)$/;
   const name = index(person) < 0 ? above.findIndex((cell) => person.test(cell)) : index(person);
   const weight = index(weighing) < 0 ? above.findIndex((cell) => weighing.test(cell)) : index(weighing);
   if (name < 0 || weight < 0) return null;
   const direct = {};
   const attempts = {};
-  const score = /^(?:total(?: kg)?|marca(?: kg)?|mejor (?:marca|intento))$/;
+  const score = /^(?:total(?: kg)?|marca(?: kg)?|mejor (?:marca|intento)|result)$/;
   const total = index(score) < 0 ? above.findIndex((cell) => score.test(cell)) : index(score);
-  const pointHeading = /^(?:wilks(?: puntos)?|puntos wilks|(?:pt )?ipf(?: gl)?|puntos ipf|gl|puntos)$/;
+  const pointHeading = /^(?:wilks(?: puntos)?|puntos wilks|(?:pt )?ipf(?: gl)?|puntos ipf|gl|puntos|w pts)$/;
   const points = index(pointHeading) < 0 ? above.findIndex((cell) => pointHeading.test(cell)) : index(pointHeading);
   const movements = new Map();
   for (const [i, cell] of names.entries()) {
@@ -189,7 +192,7 @@ function findLayout(row, previous, context) {
     const lift = liftHeading(cell);
     if (lift && i > weight && !movements.has(lift)) movements.set(lift, i);
   }
-  const numbered = row.map((cell, i) => /^(?:[123](?:[ºª°]|\s*intento)|[123]\.(?:er|o)?)$/i.test(cell.value) ? i : -1).filter((i) => i > weight);
+  const numbered = row.map((cell, i) => /^(?:[123](?:[ºª°]|\s*(?:intento|att\.?))|[123]\.(?:er|o)?)$/i.test(cell.value) ? i : -1).filter((i) => i > weight);
   for (const [lift, i] of movements) {
     if (row[i].width >= 3) attempts[lift] = [i, i + 1, i + 2];
     else direct[lift] = i;
@@ -218,7 +221,7 @@ function findLayout(row, previous, context) {
     club: index(/^(?:club(?: o equip[oa])?|equipo|gimnasio|team)$/) < 0
       ? above.findIndex((cell) => /^(?:club|gimnasio|team)$/.test(cell)) : index(/^(?:club(?: o equip[oa])?|equipo|gimnasio|team)$/),
     category: index(/^(?:cat|categoria)(?: kg| peso(?: corporal)?)?$/),
-    birth: index(/^(?:ano(?: nacimiento)?|f n|f nacim|fecha (?:de )?nacimiento|nacimiento)$/),
+    birth: index(/^(?:ano(?: nacimiento)?|f n|f nacim|fecha (?:de )?nacimiento|nacimiento|by|born)$/),
     place: index(/^(?:pl|pos|puesto|clas|cl|clasificacion|posicion)$/),
     sex,
     spanishSexCodes: names[sex] === 'm h',
@@ -299,7 +302,8 @@ function parseArchiveRows(rows, document, extract = document.url) {
   const head = intro.find((text) => /campeonato|regional|copa|memorial|trofeo|open/i.test(text) &&
     !/asociacion|clasificacion|levantador/i.test(normalizeName(text)));
   const description = document.description.replace(/:\s*(?:mujeres|hombres|femenino|masculino|powerlifting|press banca).*/i, '');
-  const title = head && head.length > 10 ? head : description;
+  const title = /2017\/Power_(?:Raw_(?:Fem|Mas)|Equip)_Salamanca_2017\.htm$/i.test(extract) ? description :
+    head && head.length > 10 ? head : description;
   const date = [description, ...intro].map((text) => dateFromArchive(text, document.year)).find(Boolean) || null;
   let sex = historicalSex(document.label) || (/[_/-]fem(?:[_.-]|$)/i.test(extract) ? 'F' : /[_/-]mas(?:[_.-]|$)/i.test(extract) ? 'M' : null);
   let equipment = historicalEquipment(document.label + ' ' + title + ' ' + extract.replace(/_/g, ' '));

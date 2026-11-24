@@ -88,7 +88,7 @@ function renderRanking() {
     context.className = 'ranking-context muted';
     context.textContent = `${row.sourceFederation || 'AEP'} · ${eventTypeLabel(eventTypeFromRow(row))}`;
     meet.appendChild(context);
-    if (row.resultsUrl) meet.insertAdjacentHTML('beforeend', link(row.resultsUrl, row.resultArchive ? 'Resultados' : 'Acta'));
+    if (row.resultsUrl) meet.insertAdjacentHTML('beforeend', link(row.resultsUrl, 'Acta'));
     const expiry = rankingCell(tr, daysRemaining === 0 ? 'Último día' : `${daysRemaining} ${daysRemaining === 1 ? 'día' : 'días'}`, 'ranking-expiry');
     const date = document.createElement('small');
     date.className = 'ranking-context';
@@ -407,9 +407,9 @@ function showAthlete(athleteId, rankingAthleteId) {
         ${row.sourceReview ? renderSourceReview(row.sourceReview) : row.isRankable === false ? '<p class="muted"><strong>No rankeable:</strong> resultado incompleto o no individual.</p>' : ''}
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
         ${Number.isFinite(row.historicalPoints) ? `<p class="muted">${escapeHtml(row.historicalPointsLabel || 'Puntos del acta')} · ${formatNumber(row.historicalPoints, 2)}</p>` : ''}
-        ${row.countrySource && row.country === 'ESP' ? `<p class="links-cell">${link(row.countrySource, 'Fuente que acredita a España')}</p>` : ''}
-        <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${row.meetPageUrl !== row.resultsUrl ? link(row.resultsUrl, 'Documento de resultados') : ''}
-          ${(row.officialResultsUrls || []).map((url, index) => link(url, `Acta federativa ${index + 1}`)).join(' ')}
+        ${row.countrySource && row.country === 'ESP' && row.countrySource !== row.resultsUrl ? `<p class="links-cell">${link(row.countrySource, 'Fuente que acredita a España')}</p>` : ''}
+        <p class="links-cell">${row.meetPageUrl !== row.resultsUrl ? link(row.meetPageUrl, 'Página de competición') : ''} ${link(row.resultsUrl, 'Acta original')}
+          ${(row.officialResultsUrls || []).filter((url) => url !== row.resultsUrl && url !== row.meetPageUrl).map((url, index) => link(url, `Acta federativa ${index + 1}`)).join(' ')}
         </p>
       </article>
     `).join('')}

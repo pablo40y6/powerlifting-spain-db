@@ -88,14 +88,15 @@ La ventana se calcula para el día de España con 18 meses naturales y conserva
 la marca hasta el día de vencimiento inclusive. Al caducar una marca, el
 ranking toma la siguiente mejor que siga vigente. Si la fuente solo publica un
 intervalo, la web identifica el día de inicio como referencia. Los resultados
-internacionales se incorporan al historial desde 2021 cuando la fuente identifica
-al atleta con España. La importación parte de las fichas de Mundiales y Europeos
+internacionales se incorporan cuando el acta identifica al atleta con España.
+La importación consulta las fichas de Mundiales y Europeos
 del [calendario de Powerlifting Spain](https://powerliftingspain.es/campeonatos-ano-2026/).
-Da prioridad a las actas que publica la AEP y enlaza sus fichas a las marcas
-obtenidas del [portal oficial de la IPF](https://ipf.powerlifting.sport/results)
-y de los archivos abiertos IPF y EPF de [OpenPowerlifting](https://gitlab.com/openpowerlifting/opl-data).
-En el archivo abierto los
-puntos GL se calculan con [la fórmula oficial de la IPF](https://www.powerlifting.sport/rules/codes/info/ipf-formula).
+Da prioridad a las actas que publica la AEP y enlaza cada marca a su acta
+original. También lee el [portal oficial de la IPF](https://ipf.powerlifting.sport/results)
+y los archivos de [la IPF](https://www.powerlifting.sport/championships/results)
+y [la EPF](https://www.europowerlifting.org/results). Los puntos GL se conservan
+cuando figuran en el acta. OpenPowerlifting se consultó para localizar referencias,
+pero el índice se genera íntegramente a partir de fuentes oficiales.
 
 La [normativa AEP de 2025](https://powerliftingspain.es/wp-content/uploads/2025/02/Campeonatos_Clasificacion_2025-02-25.pdf)
 define la marca histórica como el mejor total obtenido en competición AEP. La
@@ -109,13 +110,12 @@ convocatoria determina los requisitos definitivos de inscripción.
 
 ## Archivo histórico y clubes
 
-El buscador incorpora el [archivo de resultados de Power Hispania](https://www.powerhispania.net/Campeonatos.htm)
-de 1993 a 2020 y lo complementa con el archivo AEP de OpenPowerlifting. Se
-conservan las categorías de la época y las puntuaciones originales en la ficha.
-Los campeonatos internacionales IPF y EPF amplían la consulta a las marcas
-españolas localizadas desde 1982. La fecha queda vacía cuando solo consta el año.
-El índice enumera los enlaces inaccesibles y los documentos históricos que no se
-pudieron importar con fiabilidad en historicalCoverage.
+El buscador incorpora el [archivo de resultados de Power Hispania](https://www.powerhispania.net/Campeonatos.htm).
+Conserva las categorías de la época y las puntuaciones originales en la ficha.
+Los campeonatos internacionales IPF y EPF amplían la consulta con actas históricas.
+La fecha queda vacía cuando solo consta el año. El índice guarda la cobertura de
+los archivos de la AEP en `historicalCoverage` y la de las federaciones
+internacionales en `officialSourceCoverage`.
 
 La vista **Clubes** cruza los [listados de la AEP](https://powerliftingspain.es/informacion-sobre-afiliaciones-de-clubs/)
 con las siglas publicadas en las actas. Se mantiene el texto del acta en cada

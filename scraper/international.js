@@ -3,13 +3,9 @@ const { createHash } = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const cheerio = require('cheerio');
-const XLSX = require('xlsx');
 const pLimit = require('p-limit').default;
 const { normalizeName, normalizeSpaces, parseLocaleNumber, parseSpanishDate } = require('./utils');
-const { countryCode } = require('./countries');
 
-const OPL = 'https://www.openpowerlifting.org';
-const OPL_ARCHIVES = 'https://gitlab.com/api/v4/projects/openpowerlifting%2Fopl-data/repository/archive.zip?path=meet-data%2F';
 const IPF = 'https://ipf.powerlifting.sport';
 const CACHE_DIR = process.env.PLS_INTERNATIONAL_DIR || path.join(os.tmpdir(), 'powerlifting-international');
 const DAY = 86400000;
@@ -50,35 +46,29 @@ function aepInternationalLinks(html, meetPage) {
     const text = normalizeName($(node).text());
     if (!/^(?:clasificacion(?:es)?|resultados?)/.test(text)) return;
     const url = new URL($(node).attr('href'), meetPage);
-    if (!['http:', 'https:'].includes(url.protocol) || !/^(?:www\.)?(?:powerliftingspain\.es|powerlifting\.sport|europowerlifting\.org|goodlift\.info|openipf\.org|openpowerlifting\.org)$/.test(url.hostname)) return;
+    if (!['http:', 'https:'].includes(url.protocol) || !/^(?:www\.|ipf\.)?(?:powerliftingspain\.es|powerlifting\.sport|europowerlifting\.org|goodlift\.info)$/.test(url.hostname)) return;
     url.protocol = 'https:';
     links.add(url.href);
   });
   return [...links];
 }
 
-function archiveMeetId(url) {
-  return String(url).match(/\/m\/(?:epf|ipf)\/\d+(?=\/|$|[?#])/i)?.[0];
-}
-
 function connectAepInternationalPages(entries, aepMeets) {
   return entries.map((entry) => {
-    const id = archiveMeetId(entry.competition.resultsUrl);
     const candidates = aepMeets.filter((meet) => meet.federation === entry.sourceFederation && meet.year === entry.competition.year);
-    const exact = id && candidates.find((meet) => meet.links.some((link) => archiveMeetId(link) === id));
+    const exact = candidates.find((meet) => meet.links.includes(entry.competition.resultsUrl));
     const date = Date.parse(entry.competition.date);
     const byDate = candidates.filter((meet) => Math.abs(Date.parse(meet.date) - date) <= 2 * DAY &&
       (!/press banca/i.test(meet.title) || entry.eventType === 'bench'));
     const aepMeet = exact || (byDate.length === 1 ? byDate[0] : null);
     if (!aepMeet) return entry;
-    const official = aepMeet.links.filter((link) => !archiveMeetId(link));
     return {
       ...entry,
       competition: {
         ...entry.competition,
         meetPageUrl: aepMeet.url,
         meetPageTitle: aepMeet.title,
-        officialResultsUrls: [...new Set([...official, ...(entry.competition.officialResultsUrls || [])])],
+        officialResultsUrls: [...new Set([...aepMeet.links, ...(entry.competition.officialResultsUrls || [])])],
       },
     };
   });
@@ -143,90 +133,6 @@ function makeEntry(event, result) {
       officialResultsUrls: event.officialResultsUrls,
     },
   };
-}
-
-// https://www.powerlifting.sport/rules/codes/info/ipf-formula
-const GL_COEFFICIENTS = {
-  M: { raw: [1199.72839, 1025.18162, 0.00921], equipped: [1236.25115, 1449.21864, 0.01644],
-    rawBench: [320.98041, 281.40258, 0.01008], equippedBench: [381.22073, 733.79378, 0.02398] },
-  F: { raw: [610.32796, 1045.59282, 0.03048], equipped: [758.63878, 949.31382, 0.02435],
-    rawBench: [142.40398, 442.52671, 0.04724], equippedBench: [221.82209, 357.00377, 0.02937] },
-};
-
-function goodliftPoints(total, bodyweight, sex, equipment, eventType) {
-  if (!total || bodyweight < (sex === 'M' ? 40 : 35)) return null;
-  const [a, b, c] = GL_COEFFICIENTS[sex][equipment + (eventType === 'bench' ? 'Bench' : '')];
-  return Number((100 * total / (a - b * Math.exp(-c * bodyweight))).toFixed(2));
-}
-
-function readCsv(csv) {
-  const workbook = XLSX.read(csv, { type: 'string', raw: true });
-  return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
-}
-
-function openPowerliftingResults(buffer, federation, years) {
-  const archive = XLSX.CFB.read(buffer, { type: 'buffer' });
-  const files = new Map(archive.FullPaths.map((filename, index) => [filename, archive.FileIndex[index].content]));
-  const read = (filename) => {
-    const content = files.get(filename);
-    return content ? Buffer.from(content).toString('utf8') : '';
-  };
-  const entries = [];
-  const meets = [...files.keys()].filter((filename) => filename.endsWith('/meet.csv'));
-  if (!meets.length) throw new Error('La descarga no contiene competiciones.');
-  for (const filename of meets) {
-    const directory = filename.slice(0, -'meet.csv'.length);
-    const id = directory.split('/').at(-2);
-    const [meet] = readCsv(read(filename));
-    const year = Number(meet?.Date?.slice(0, 4));
-    if (!years.includes(year) || meet.Federation !== federation || !meet.MeetName ||
-        /special olympics|\bsoi\b/i.test(meet.MeetName) || meet.Sanctioned === 'No') continue;
-    const csv = read(directory + 'entries.csv');
-    if (!csv) continue;
-    const officialResultsUrls = read(directory + 'URL').split(/\r?\n/).map((line) => line.trim())
-      .filter((line) => /^https?:\/\/(?:www\.)?(?:powerlifting\.sport|europowerlifting\.org|goodlift\.info|powerhispania\.net|powerliftingspain\.es)\//i.test(line));
-    const event = {
-      url: `${OPL}/m/${federation.toLowerCase()}/${id}`, federation, archive: 'OpenPowerlifting', title: meet.MeetName,
-      date: meet.Date, year, dateApproximate: true, officialResultsUrls,
-      location: [meet.MeetTown, meet.MeetCountry].filter(Boolean).join(', '),
-    };
-    for (const row of readCsv(csv)) {
-      const national = federation === 'AEP';
-      const country = countryCode(row.Country) || normalizeSpaces(row.Country) || null;
-      if ((!national && country !== 'ESP') || !['F', 'M'].includes(row.Sex) || !['SBD', 'SDB', 'B', 'D', 'S'].includes(row.Event)) continue;
-      const equipment = row.Equipment === 'Raw' ? 'raw' : ['Single-ply', 'Multi-ply', 'Wraps'].includes(row.Equipment) ? 'equipped' : null;
-      const category = publishedCategory(`${row.WeightClassKg}kg`);
-      const bodyweight = positiveNumber(row.BodyweightKg);
-      if (!equipment || !category || !bodyweight) continue;
-      const eventType = { B: 'bench', D: 'deadlift', S: 'squat' }[row.Event] || 'powerlifting';
-      const allColumns = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
-      const columns = eventType === 'powerlifting' ? allColumns : { [eventType]: allColumns[eventType] };
-      const attempts = {};
-      const bestLifts = {};
-      for (const [movement, column] of Object.entries(columns)) {
-        const values = [1, 2, 3].map((n) => row[`${column}${n}Kg`]);
-        if (values.some(Boolean)) {
-          attempts[movement] = values.map((raw) => {
-            const n = parseLocaleNumber(raw);
-            return { raw: raw || '', weight: n ? Math.abs(n) : null, good: n ? n > 0 : null };
-          });
-        }
-        const successful = attempts[movement]?.filter((attempt) => attempt.good).map((attempt) => attempt.weight) || [];
-        bestLifts[movement] = positiveNumber(row[`Best3${column}Kg`]) || Math.max(0, ...successful) || null;
-      }
-      const total = positiveNumber(row.TotalKg) ?? (eventType === 'powerlifting' ? null : bestLifts[eventType]);
-      const entry = makeEntry(event, {
-        athleteName: normalizeSpaces(row.Name),
-        yearOfBirth: /^\d{4}$/.test(row.BirthYear) ? Number(row.BirthYear) : /^\d{4}-/.test(row.BirthDate) ? Number(row.BirthDate.slice(0, 4)) : null,
-        sex: row.Sex, category, placing: row.Place, bodyweight, eventType, equipment, bestLifts, attempts, total, country,
-        club: normalizeSpaces(row.Team) || null,
-        ipfgl: year >= 2021 && ['powerlifting', 'bench'].includes(eventType)
-          ? goodliftPoints(total, bodyweight, row.Sex, equipment, eventType) : null,
-      });
-      if (entry) entries.push(entry);
-    }
-  }
-  return entries;
 }
 
 function ipfResults(html, url) {
@@ -363,7 +269,7 @@ function mergeInternationalResults(primary, secondary) {
   return entries;
 }
 
-async function fetchInternationalResults(fetchBuffer, years, onWarning) {
+async function fetchInternationalResults(fetchBuffer, onWarning) {
   const limit = pLimit(2);
   await fs.mkdir(CACHE_DIR, { recursive: true });
 
@@ -390,34 +296,12 @@ async function fetchInternationalResults(fetchBuffer, years, onWarning) {
     }
   }
 
-  const archiveBuild = Promise.all(['IPF', 'EPF'].map((federation) =>
-    safe(OPL_ARCHIVES + federation.toLowerCase(), (buffer) => openPowerliftingResults(buffer, federation, years), DAY)));
   const ipfLinks = await safe(`${IPF}/results`, (buffer) => ipfEventLinks(buffer.toString('utf8')), DAY);
   const ipf = await Promise.all(ipfLinks.map((url) => safe(url, (buffer) => ipfResults(buffer.toString('utf8'), url), 3 * DAY)));
-  return mergeInternationalResults(ipf.flat(), (await archiveBuild).flat());
-}
-
-async function fetchAepArchive(fetchBuffer, years, onWarning) {
-  const url = OPL_ARCHIVES + 'aep';
-  const file = path.join(CACHE_DIR, createHash('sha256').update(url).digest('hex'));
-  await fs.mkdir(CACHE_DIR, { recursive: true });
-  try {
-    const stat = await fs.stat(file);
-    if (Date.now() - stat.mtimeMs < 7 * DAY) return openPowerliftingResults(await fs.readFile(file), 'AEP', years);
-  } catch {}
-  try {
-    const buffer = await fetchBuffer(url);
-    const entries = openPowerliftingResults(buffer, 'AEP', years);
-    await fs.writeFile(file, buffer);
-    return entries;
-  } catch (error) {
-    onWarning('No se pudo actualizar el archivo AEP de OpenPowerlifting: ' + error.message);
-    try { return openPowerliftingResults(await fs.readFile(file), 'AEP', years); }
-    catch { return []; }
-  }
+  return mergeInternationalResults(ipf.flat(), []);
 }
 
 module.exports = {
-  fetchInternationalResults, fetchAepArchive, alignInternationalNames, openPowerliftingResults, ipfResults,
+  fetchInternationalResults, alignInternationalNames, ipfResults,
   findAepInternationalMeets, aepInternationalLinks, connectAepInternationalPages, classifyAepInternational, mergeInternationalResults, assignRankingIdentities,
 };

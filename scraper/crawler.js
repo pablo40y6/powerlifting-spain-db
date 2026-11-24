@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { setTimeout: delay } = require('node:timers/promises');
 const os = require('os');
 const path = require('path');
 const axios = require('axios');
@@ -9,8 +10,9 @@ const { reviewResult } = require('./reviewed-results');
 const { fetchHistory, mergeHistory } = require('./history');
 const { fetchAffiliations, clubDirectory } = require('./clubs');
 const { fetchRecordEvidence, applyCountryEvidence } = require('./countries');
+const { fetchOfficialScoresheets } = require('./official-sources');
 const {
-  fetchInternationalResults, fetchAepArchive, alignInternationalNames, findAepInternationalMeets, aepInternationalLinks,
+  fetchInternationalResults, alignInternationalNames, findAepInternationalMeets, aepInternationalLinks,
   connectAepInternationalPages, classifyAepInternational, mergeInternationalResults, assignRankingIdentities,
 } = require('./international');
 const { parseDocument, mergeAthleteEntries, _private: parserPrivate } = require('./parser');
@@ -33,7 +35,6 @@ const INDEX_FILE = path.join(DATA_DIR, 'index.json');
 const COMPETITION_YEARS = Array.from(
   { length: new Date().getUTCFullYear() - 2020 }, (_, index) => new Date().getUTCFullYear() - index
 );
-const ARCHIVE_YEARS = [...COMPETITION_YEARS, ...Array.from({ length: 39 }, (_, index) => 2020 - index)];
 const SEED_YEAR_PAGES = COMPETITION_YEARS.map(
   (year) => `https://powerliftingspain.es/campeonatos-${year >= 2023 ? 'ano-' : ''}${year}/`
 );
@@ -79,7 +80,7 @@ function ensureDirectories() {
 }
 
 function createHttpClient() {
-  return axios.create({
+  const client = axios.create({
     timeout: 45000,
     maxRedirects: 5,
     headers: {
@@ -90,6 +91,16 @@ function createHttpClient() {
     responseType: 'arraybuffer',
     validateStatus: (status) => status >= 200 && status < 400,
   });
+  client.interceptors.response.use(undefined, async (error) => {
+    const config = error.config;
+    const transient = ['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN'].includes(error.code) ||
+      [429, 502, 503, 504].includes(error.response?.status);
+    if (!config || !transient || (config.plsRetries || 0) >= 2) throw error;
+    config.plsRetries = (config.plsRetries || 0) + 1;
+    await delay(750 * config.plsRetries);
+    return client.request(config);
+  });
+  return client;
 }
 
 function textWithLineBreaks($, node) {
@@ -395,9 +406,9 @@ async function buildIndex({ onProgress } = {}) {
 
   const download = async (url) => Buffer.from((await client.get(url)).data);
   const warn = (warning) => state.warnings.push(warning);
-  const internationalBuild = fetchInternationalResults(download, ARCHIVE_YEARS, warn);
+  const internationalBuild = fetchInternationalResults(download, warn);
+  const officialBuild = fetchOfficialScoresheets(download, warn);
   const historicalBuild = fetchHistory(download, parseDocument, warn);
-  const secondaryArchive = fetchAepArchive(download, ARCHIVE_YEARS, warn);
   const affiliations = fetchAffiliations((url) => fetchBufferWithCache(client, url), warn);
   const nationalityRecords = fetchRecordEvidence((url) => fetchBufferWithCache(client, url), warn);
 
@@ -507,13 +518,13 @@ async function buildIndex({ onProgress } = {}) {
   }
   log({ phase: 'international' });
   const historical = await historicalBuild;
-  const satellite = await secondaryArchive;
-  const historicEntries = mergeHistory(historical.entries, satellite.filter((entry) => entry.competition.year < 2021));
-  const external = connectAepInternationalPages(await internationalBuild, [...aepInternationalMeets.values()]);
+  const historicEntries = mergeHistory(historical.entries, []);
+  const official = await officialBuild;
+  const external = connectAepInternationalPages(mergeInternationalResults(await internationalBuild, official.entries), [...aepInternationalMeets.values()]);
   const national = [...domestic, ...historicEntries];
   const international = alignInternationalNames(mergeInternationalResults(aepInternational, external), national);
   const mergedEntries = [...national, ...international];
-  applyCountryEvidence(mergedEntries, [...await nationalityRecords, ...satellite.filter((entry) => entry.country)]);
+  applyCountryEvidence(mergedEntries, await nationalityRecords);
   assignRankingIdentities(mergedEntries);
   const clubCatalog = clubDirectory(mergedEntries, await affiliations, new Map([...historical.legends, ...legends]));
   const athletes = buildAthleteIndex(mergedEntries);
@@ -527,6 +538,7 @@ async function buildIndex({ onProgress } = {}) {
     internationalWithAepPageCount: international.filter((entry) => aepInternationalMeets.has(entry.competition.meetPageUrl)).length,
     historicalEntryCount: mergedEntries.filter((entry) => entry.competition.year < 2021).length,
     historicalCoverage: historical.coverage,
+    officialSourceCoverage: official.coverage,
     clubCatalog,
     athleteCount: athletes.length,
     entryCount: mergedEntries.length,

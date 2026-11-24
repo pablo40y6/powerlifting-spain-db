@@ -140,9 +140,9 @@ function bestAttempt(attempts) {
 
 function officialBestLift(entry, movement) {
   const archiveSource = entry.competitionYear < 2021 && entry.resultArchive &&
-    /^https?:\/\/(?:www\.)?(?:openpowerlifting\.org|powerhispania\.net|powerliftingspain\.es)\//.test(entry.resultsUrl || '');
+    /^https?:\/\/(?:www\.)?(?:powerhispania\.net|powerliftingspain\.es)\//.test(entry.resultsUrl || '');
   const internationalSource = ['IPF', 'EPF'].includes(entry.sourceFederation) && entry.country === 'ESP' &&
-    /^https:\/\/(?:www\.openpowerlifting\.org|ipf\.powerlifting\.sport)\//.test(entry.resultsUrl || '');
+    /^https:\/\/(?:(?:www\.|ipf\.)?powerlifting\.sport|(?:www\.)?europowerlifting\.org)\//.test(entry.resultsUrl || '');
   if (!archiveSource && !internationalSource) return null;
   const weight = entry.bestLifts?.[movement];
   return Number.isFinite(weight) && weight > 0 ? weight : null;
@@ -327,11 +327,7 @@ function auditTotals(entry) {
   if (total !== null && total > 0) {
     if (eventType === 'powerlifting' && hasValidPowerliftingTotalFromAttempts(entry)) {
       const computed = computedPowerliftingTotal(entry);
-      const archived1988 = entry.resultsUrl === 'https://www.openpowerlifting.org/m/epf/8801' &&
-        normalizedKey(entry.athleteName) === 'eduardo cruz rubio 1' && total === 705 && Math.abs(computed - 705.4) < EPSILON;
-      if (archived1988) {
-        findings.push(makeFinding(entry, 'info', 'historical_published_total_difference', 'El archivo de 1988 publica 705 kg y los mejores levantamientos suman 705,4 kg. Se conservan ambos valores.', { value: total, expected: computed }));
-      } else if (Math.abs(total - computed) > EPSILON) {
+      if (Math.abs(total - computed) > EPSILON) {
         findings.push(makeFinding(entry, 'warning', 'total_attempt_sum_mismatch', 'El total no coincide con la suma de mejores intentos válidos.', { value: total, expected: computed }));
       }
     } else if (['squat', 'bench', 'deadlift'].includes(eventType)) {
@@ -366,7 +362,7 @@ function auditDates(entry, currentYear = CURRENT_YEAR) {
   if (!entry.competitionDate && !entry.competitionYear) {
     findings.push(makeFinding(entry, 'warning', 'date_and_year_missing', 'competitionDate y competitionYear están vacíos.'));
   }
-  const firstYear = entry.resultArchive ? 1982 : 2010;
+  const firstYear = entry.resultArchive ? 1978 : 2010;
   if (year !== null && (year < firstYear || year > currentYear + 1)) {
     findings.push(makeFinding(entry, 'warning', 'competition_year_out_of_range', 'competitionYear fuera de rango razonable.', { value: year, expected: `${firstYear}-${currentYear + 1}` }));
   }
@@ -729,6 +725,10 @@ function auditIndex(index, options = {}) {
   const entries = flattenEntries(index);
   const findings = [];
   for (const entry of entries) {
+    if (index?.officialSourceCoverage && (entry.resultArchive === 'OpenPowerlifting' ||
+      [entry.resultsUrl, entry.countrySource, ...(entry.officialResultsUrls || [])].some((url) => /^https?:\/\/(?:[^/]+\.)?(?:openpowerlifting|openipf)\.org\//i.test(url || '')))) {
+      findings.push(makeFinding(entry, 'error', 'secondary_results_source', 'El resultado debe proceder de un acta oficial.', { value: entry.resultsUrl }));
+    }
     const reviewed = entry.sourceReview && validateSourceReview(entry);
     if (entry.sourceReview) {
       findings.push(reviewed
