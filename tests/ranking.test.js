@@ -84,6 +84,19 @@ test('el acta europea conserva el tachado y exige que los tres mejores válidos 
   assert.equal(results[0].attempts.bench[2].good, false);
   assert.equal(results[0].total, 652.5);
   assert.deepEqual(results[0].bestLifts, { squat: 247.5, bench: 152.5, deadlift: 252.5 });
+
+  const nomination = 'https://powerliftingspain.es/convocatoria-universitaria.pdf';
+  const university = parsePdfScoreRows([...rows.slice(0, 3),
+    row(['3.', 'Atleta Seleccionado', '2005', 'UGR', ...marks], [13, 17]),
+    row(['4.', 'Atleta No Convocado', '2005', 'UGR', ...marks], [13, 17]),
+  ], {
+    fed: 'EPF', year: 2026, header: 'Men',
+    title: 'European Classic University Cup',
+    url: 'https://www.europowerlifting.org/fileadmin/data/results/2026/university-cup/detailed_scoresheet_m.pdf',
+    roster: { url: nomination, athletes: [{ name: 'Seleccionado Atleta', sex: 'M', birth: 2005 }] },
+  });
+  assert.deepEqual(university.map((entry) => [entry.athleteName, entry.country, entry.countrySource]),
+    [['Atleta Seleccionado', 'ESP', nomination]]);
 });
 
 test('el calendario internacional de la AEP enlaza el acta y se prioriza sobre la copia', () => {

@@ -14,7 +14,7 @@ const CACHE = process.env.PLS_HISTORY_DIR || path.join(os.tmpdir(), 'codex-aep-h
 const YEARS = Array.from({ length: 28 }, (_, index) => 1993 + index);
 const LIFTS = { squat: 'S', bench: 'B', deadlift: 'D' };
 const OFFICIAL_HOSTS = /^(?:www\.)?(?:powerhispania\.net|powerliftingspain\.es)$/i;
-const NO_RESULT = /^(?:dt|dq|dsq|dns|dnf|descalificado|retirado|no presentado)$/i;
+const NO_RESULT = /^(?:dt|dq|dsq|dns|dnf|[-–—]+|descalificado|retirado|no presentado)$/i;
 const ARCHIVE_FIXES = {
   '2017/Power_Orgiva_mujeres_Raw_2016.htm|Mujeres Raw': '2017/Power_Raw_Fem_Salamanca_2017.htm',
   '2017/Power_Orgiva_hombres_Raw_2016.htm|Hombres Raw': '2017/Power_Raw_Mas_Salamanca_2017.htm',
@@ -31,6 +31,13 @@ const CASE_CORRECTIONS = new Map([
   'Banca_Madrid_Hombres_Raw_2016.htm',
   'Banca_Madrid_Hombres_Equip_2016.htm',
 ].map((name) => ['2016/' + name.toLowerCase(), '2016/' + name]));
+const ADDITIONAL_ACTS = [
+  { file: '2017/Copa_Talavera_Banca_Fem.htm', label: 'Press Banca Mujeres' },
+  { file: '2017/Copa_Talavera_Banca_Mas.htm', label: 'Press Banca Hombres' },
+].map(({ file, label }) => ({
+  url: ROOT + file, page: archiveYearUrl(2017), label, year: 2017,
+  description: 'Copa de España de Press Banca, Talavera de la Reina, 25-26-nov-2017',
+}));
 const CADIZ_CLUBS = [
   'FG POWER ALHAURÍN', 'AD SIDERÓPOLIS', 'ASOCIACIÓN ANDALUZA', 'LIFTERS SQUAD',
   'POWER EXPLOSIVE', 'POWEREXPLOSIVE', 'GIMNASIO CROM', 'BOX LINARES', 'MÁLAGA POWER TEAM',
@@ -127,8 +134,8 @@ function htmlRows(buffer, archiveCss = '') {
 
 function historicalSex(text) {
   const value = normalizeName(text);
-  const female = /\b(?:femenin[oa]s?|feminas?|mujeres|women|dames)\b/.test(value);
-  const male = /\b(?:masculin[oa]s?|hombres|varones|men)\b/.test(value);
+  const female = /\b(?:femenin[oa]s?|feminas?|mujeres|women|dames|dones)\b/.test(value);
+  const male = /\b(?:masculin[oa]s?|hombres|varones|men|homes)\b/.test(value);
   return female === male ? null : female ? 'F' : 'M';
 }
 
@@ -142,8 +149,8 @@ function historicalEquipment(text) {
 function liftHeading(value) {
   const text = normalizeName(value).replace(/^all /, '');
   if (/^(?:sentadillas?|sent|squat|sq)(?:\b|\d)/.test(text)) return 'squat';
-  if (/^(?:press (?:de )?banca|p banca|banca|bench|pb|p b)(?:\b|\d)/.test(text)) return 'bench';
-  if (/^(?:peso (?:muerto|m)|dead\s*lift|pm|p (?:m|muerto))(?:\b|\d)/.test(text)) return 'deadlift';
+  if (/^(?:press (?:de )?banca|pressio en banc|p banca|banca|bench|pb|p b)(?:\b|\d)/.test(text)) return 'bench';
+  if (/^(?:peso (?:muerto|m)|pes mort|dead\s*lift|pm|p (?:m|muerto))(?:\b|\d)/.test(text)) return 'deadlift';
   return null;
 }
 
@@ -170,16 +177,16 @@ function findLayout(row, previous, context) {
   const names = row.map((cell) => normalizeName(cell.value));
   const above = previous?.map((cell) => normalizeName(cell.value)) || [];
   const index = (pattern) => names.findIndex((cell) => pattern.test(cell));
-  const person = /^(?:nombre(?: y apellidos)?|apellidos(?: y nombre)?|levantador[ae]?(?:s)?|deportista|competidor[ae]?|resultados|femenino|masculino|mujeres|hombres|feminas|name|lifters?)(?: \d+)?$/;
-  const weighing = /^(?:peso(?: corporal)?(?: kg)?|p corp(?:oral)?|p corporal kg|weight|bw|bwt|bodyweight)$/;
+  const person = /^(?:nombre(?: y apellidos)?|nom|apellidos(?: y nombre)?|levantador[ae]?(?:s)?|deportista|competidor[ae]?|resultados|femenino|masculino|mujeres|hombres|feminas|name|lifters?)(?: \d+)?$/;
+  const weighing = /^(?:peso?(?: corporal)?(?: kg)?|p corp(?:oral)?|p corporal kg|weight|bw|bwt|bodyweight)$/;
   const name = index(person) < 0 ? above.findIndex((cell) => person.test(cell)) : index(person);
   const weight = index(weighing) < 0 ? above.findIndex((cell) => weighing.test(cell)) : index(weighing);
   if (name < 0 || weight < 0) return null;
   const direct = {};
   const attempts = {};
-  const score = /^(?:total(?: kg)?|marca(?: kg)?|mejor (?:marca|intento)|result)$/;
-  const total = index(score) < 0 ? above.findIndex((cell) => score.test(cell)) : index(score);
-  const pointHeading = /^(?:wilks(?: puntos)?|puntos wilks|(?:pt )?ipf(?: gl)?|puntos ipf|gl|puntos|w pts)$/;
+  const score = /^(?:total(?: kg)?|marca(?: kg)?|mejor (?:marca|intento)|result|m p[bm])$/;
+  let total = index(score) < 0 ? above.findIndex((cell) => score.test(cell)) : index(score);
+  const pointHeading = /^(?:wilks(?: puntos)?|puntos wilks|(?:pt )?ipf(?: gl| pt)?|puntos ipf|gl|puntos|w pts)$/;
   const points = index(pointHeading) < 0 ? above.findIndex((cell) => pointHeading.test(cell)) : index(pointHeading);
   const movements = new Map();
   for (const [i, cell] of names.entries()) {
@@ -192,7 +199,7 @@ function findLayout(row, previous, context) {
     const lift = liftHeading(cell);
     if (lift && i > weight && !movements.has(lift)) movements.set(lift, i);
   }
-  const numbered = row.map((cell, i) => /^(?:[123](?:[ºª°]|\s*(?:intento|att\.?))|[123]\.(?:er|o)?)$/i.test(cell.value) ? i : -1).filter((i) => i > weight);
+  const numbered = row.map((cell, i) => /^(?:[123](?:[ºª°]|er|on|\s*(?:intento|att\.?))|[123]\.(?:er|o)?)$/i.test(cell.value) ? i : -1).filter((i) => i > weight);
   for (const [lift, i] of movements) {
     if (row[i].width >= 3) attempts[lift] = [i, i + 1, i + 2];
     else direct[lift] = i;
@@ -209,6 +216,7 @@ function findLayout(row, previous, context) {
   }
   const solo = /(?:banca|press|bench)/.test(context) && !/powerlifting|power/.test(context) ? 'bench'
     : /(?:peso muerto|pmuerto|deadlift)/.test(context) && !/powerlifting|power/.test(context) ? 'deadlift' : null;
+  if (total < 0 && solo) total = index(solo === 'bench' ? /^pb$/ : /^pm$/);
   if (solo && total >= 0 && !Object.keys(attempts).length && !Object.keys(direct).length) direct[solo] = total;
   const lifts = Object.keys(LIFTS).filter((lift) => attempts[lift]?.length === 3 || direct[lift] !== undefined);
   // A summary with a total alone cannot establish the three best lifts.
@@ -221,7 +229,7 @@ function findLayout(row, previous, context) {
     club: index(/^(?:club(?: o equip[oa])?|equipo|gimnasio|team)$/) < 0
       ? above.findIndex((cell) => /^(?:club|gimnasio|team)$/.test(cell)) : index(/^(?:club(?: o equip[oa])?|equipo|gimnasio|team)$/),
     category: index(/^(?:cat|categoria)(?: kg| peso(?: corporal)?)?$/),
-    birth: index(/^(?:ano(?: nacimiento)?|f n|f nacim|fecha (?:de )?nacimiento|nacimiento|by|born)$/),
+    birth: index(/^(?:ano(?: nacimiento)?|a n|any|f n|f nacim|fecha (?:de )?nacimiento|nacimiento|by|born)$/),
     place: index(/^(?:pl|pos|puesto|clas|cl|clasificacion|posicion)$/),
     sex,
     spanishSexCodes: names[sex] === 'm h',
@@ -235,7 +243,9 @@ function numeric(cell) {
 }
 
 function dateFromArchive(text, year) {
-  const normalized = normalizeSpaces(text).replace(/(\d)[- ]([a-záéíóú]{3,10})[-.](?=\s*\d{4})/gi, '$1 $2 ')
+  const normalized = normalizeSpaces(text).replace(/\bfebrer\b/gi, 'febrero')
+    .replace(/\b(\d{1,2})-(\d{1,2})-((?:19|20)\d{2})\b/g, '$1.$2.$3')
+    .replace(/(\d)[- ]([a-záéíóú]{3,10})[-.](?=\s*\d{4})/gi, '$1 $2 ')
     .replace(/\b(\d{1,2}([./])\d{1,2}\2)(\d{2})\b/g, (value, dayMonth, separator, short) =>
       Number(short) === year % 100 ? dayMonth + year : value);
   const date = parseSpanishDate(normalized);
@@ -439,7 +449,7 @@ async function fetchHistory(fetchBuffer, parseDocument, onWarning) {
     try { return archiveLinks(await cached(url), url, year); }
     catch (error) { onWarning('No se pudo leer el índice histórico de ' + year + ': ' + error.message); return []; }
   }));
-  const docs = [...new Map(indexes.flat().map((doc) => [doc.url, doc])).values()];
+  const docs = [...new Map([...indexes.flat(), ...ADDITIONAL_ACTS].map((doc) => [doc.url, doc])).values()];
   const unavailable = [];
   const unparsed = [];
   const legends = new Map();

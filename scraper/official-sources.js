@@ -4,6 +4,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const cheerio = require('cheerio');
 const pLimit = require('p-limit').default;
+const { PDFParse } = require('pdf-parse');
 const { normalizeSpaces } = require('./utils');
 const { readFederationPdf, readFederationTable } = require('./federation-scoresheets');
 
@@ -13,6 +14,18 @@ const ROOTS = {
 };
 const CACHE = process.env.PLS_OFFICIAL_DIR || path.join(process.env.PLS_INTERNATIONAL_DIR || os.tmpdir(), 'official-scoresheets');
 const DAY = 86400000;
+const ALBI_NOMINATIONS = {
+  url: 'https://powerliftingspain.es/wp-content/uploads/2023/03/Nominacion_AEP_EPF_University_Cup_Albi_2023.jpg',
+  athletes: [
+    { sex: 'F', name: 'Hernandez Guerrero Claudia' },
+    { sex: 'M', name: 'Fernandez Morillo Miguel' },
+    { sex: 'M', name: 'Garcia Cembranos Mario' },
+    { sex: 'M', name: 'Trejo Gonzalez Kevin' },
+    { sex: 'M', name: 'Villa Plaza Jaime' },
+    { sex: 'M', name: 'Dutu Lenta Darius' },
+  ],
+};
+const NANCY_NOMINATIONS = 'https://powerliftingspain.es/wp-content/uploads/2024/02/Horario_AEP_EPF_Universitario_Nancy_FRA_2024-02-10.pdf';
 const AUXILIARY = /\bnominations?\b|\binvitations?\b|team[ _-]*(?:points|results|scores?|award|competition)|best[ _-]*lifters?|anti[ _-]*doping|\brack[ _-]*heights?\b|live[ _-]*stream|\bparticipants\b/i;
 
 function sourceLinks(buffer, page, base) {
@@ -40,12 +53,26 @@ function sourceLinks(buffer, page, base) {
 function resultDocument(url, label) {
   const pathname = new URL(url).pathname;
   if (!/\.(?:pdf|xlsx?|html?)$/i.test(pathname)) return false;
-  if (/\.html?$/i.test(pathname)) return /\/fileadmin\/.*\/(?:results|resultate)\//i.test(pathname);
+  if (/\.html?$/i.test(pathname)) return /\/fileadmin\//i.test(pathname) &&
+    /\/(?:results|resultate)\/|scoresheets?|resultados/i.test(pathname);
   return /fileadmin|\/results\//i.test(pathname) && /results?|scoresheet|details?|protocol|championship|world|europe|\.xlsx?$/i.test(pathname + ' ' + label);
 }
 
 function sourceYear(text) {
   return Number(String(text || '').match(/\b((?:19|20)\d{2})\b/)?.[1]) || null;
+}
+
+async function readUniversityNominations(buffer, url) {
+  const pdf = new PDFParse({ data: buffer });
+  try {
+    const { text } = await pdf.getText();
+    const athletes = [...text.matchAll(/^([FM])\s+([\p{L}\s,'’-]+?)\s+((?:19|20)\d{2})\s+\S[^\r\n]*/gmu)]
+      .map(([, sex, name, birth]) => ({ sex, name: normalizeSpaces(name), birth: Number(birth) }));
+    if (!athletes.length) throw new Error('No se reconoce la convocatoria universitaria de la AEP');
+    return { url, athletes };
+  } finally {
+    await pdf.destroy();
+  }
 }
 
 async function fetchOfficialScoresheets(fetchBuffer, onWarning) {
@@ -98,7 +125,9 @@ async function fetchOfficialScoresheets(fetchBuffer, onWarning) {
     await Promise.all(pending.map((meta) => limit(async () => {
       visited.add(meta.page);
       try {
-        collect(sourceLinks(await cached(meta.page, DAY), meta.page, ROOTS[meta.fed]), meta, depth === 0);
+        const buffer = await cached(meta.page, DAY);
+        const title = normalizeSpaces(cheerio.loadBuffer(buffer)('h1').first().text()) || meta.title;
+        collect(sourceLinks(buffer, meta.page, ROOTS[meta.fed]), { ...meta, title }, depth === 0);
       } catch (error) {
         coverage.unavailable.push({ url: meta.page, reason: String(error.response?.status || error.code || error.message) });
       }
@@ -106,13 +135,20 @@ async function fetchOfficialScoresheets(fetchBuffer, onWarning) {
   }
 
   coverage.documents = documents.size;
+  let nancyRoster;
+  if ([...documents.keys()].some((url) => /\/2024\/university-cup\//.test(url))) {
+    try { nancyRoster = await readUniversityNominations(await cached(NANCY_NOMINATIONS, 180 * DAY), NANCY_NOMINATIONS); }
+    catch (error) { coverage.unavailable.push({ url: NANCY_NOMINATIONS, reason: String(error.response?.status || error.code || error.message) }); }
+  }
   const batches = await Promise.all([...documents.values()].map((meta) => limit(async () => {
     try {
       const ext = path.extname(new URL(meta.url).pathname).toLowerCase();
       const archive = meta.year && meta.year < new Date().getUTCFullYear() - 1;
       const buffer = await cached(meta.url, (archive ? 180 : 2) * DAY);
       if (ext === '.pdf' && !buffer.subarray(0, 1024).includes(Buffer.from('%PDF-'))) throw new Error('El enlace no devuelve un PDF');
-      const rows = ext === '.pdf' ? await readFederationPdf(buffer, meta) : await readFederationTable(buffer, meta, ext);
+      const roster = /\/2024\/university-cup\//.test(meta.url) ? nancyRoster :
+        /\/2023\/university-cup\//.test(meta.url) ? ALBI_NOMINATIONS : null;
+      const rows = ext === '.pdf' ? await readFederationPdf(buffer, { ...meta, roster }) : await readFederationTable(buffer, meta, ext);
       if (rows.length) coverage.withSpanishResults += 1;
       return rows;
     } catch (error) {

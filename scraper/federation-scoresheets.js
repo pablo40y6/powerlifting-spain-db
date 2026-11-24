@@ -68,6 +68,25 @@ function rangeYear(value) {
   return Number(String(value || '').match(/\b((?:19|20)\d{2})\b/)?.[1]) || null;
 }
 
+function currentClass(sex, weight, year) {
+  if (!weight || year <= 2020) return classLimit(sex, weight, year);
+  const classes = sex === 'F' ? [43, 47, 52, 57, 63, 69, 76, 84] : [53, 59, 66, 74, 83, 93, 105, 120];
+  const limit = classes.find((value) => weight <= value + 0.01);
+  return limit ? '-' + limit + 'kg' : '+' + classes.at(-1) + 'kg';
+}
+
+function rosterMatch(roster, name, sex, birth) {
+  if (!roster || !name || !sex) return false;
+  const tokens = normalizeName(name).split(' ');
+  const matches = roster.athletes.filter((athlete) => {
+    if (athlete.sex !== sex || (athlete.birth && athlete.birth !== birth)) return false;
+    const nominated = normalizeName(athlete.name).split(' ');
+    return nominated.every((token) => tokens.includes(token)) &&
+      (athlete.birth || tokens.length === nominated.length);
+  });
+  return matches.length === 1;
+}
+
 function readPdfTable(operators, operations) {
   const marks = [];
   const strikes = [];
@@ -117,13 +136,13 @@ function bestOfAttempts(attempts) {
 }
 
 function reportTitle(lines, fallback) {
-  const titles = lines.filter((line) => /champion|cup|games/i.test(line) && !/nominat|federation|generated|coefficient/i.test(line));
+  const titles = lines.filter((line) => /champion|cup|games|arnold/i.test(line) && !/nominat|federation|generated|coefficient/i.test(line));
   const best = titles.find((line) => /classic|equipped/i.test(line)) || titles.find((line) => line.length > 20);
   if (!best || best.length > 200) return fallback;
   return best.replace(/,\s*[^,]*\([^)]*\),.*$/, '').replace(/\s*\bDETAILED SCORESHEET\b.*$/i, '');
 }
 
-function federationRow(meta, { name, yearOfBirth, sex, category, equipment, placing, bodyweight, attempts, bestLifts, total, ipfgl, points }) {
+function federationRow(meta, { name, yearOfBirth, sex, category, equipment, placing, bodyweight, attempts, bestLifts, total, ipfgl, points, countrySource }) {
   if (!sex || !equipment || !category || (!bodyweight && meta.year >= 2011) ||
     !/^[\p{L}][\p{L}\s.,'’()-]+$/u.test(name) || !INDIVIDUAL_PLACE.test(placing)) return null;
   const expected = meta.eventType === 'powerlifting' ? MOVEMENTS : [meta.eventType];
@@ -132,7 +151,7 @@ function federationRow(meta, { name, yearOfBirth, sex, category, equipment, plac
   if (!rankable && /^\d+\.?$/.test(placing)) return null;
   return {
     athleteName: name, athleteNameNormalized: normalizeName(name), sex, yearOfBirth, category, equipment,
-    placing: placing.replace(/\.$/, ''), country: 'ESP', countrySource: meta.url, club: 'España',
+    placing: placing.replace(/\.$/, ''), country: 'ESP', countrySource: countrySource || meta.url, club: 'España',
     attempts, bestLifts, bodyweight, total: rankable ? total : null, ipfgl: rankable ? ipfgl : null,
     ...(rankable && points > 0 && { historicalPoints: points, historicalPointsLabel: 'Wilks' }),
     sourceFederation: meta.fed, resultArchive: 'Acta oficial', eventType: meta.eventType, liftType: meta.eventType,
@@ -167,8 +186,11 @@ function parsePdfScoreRows(rows, meta, context = {}) {
     if (cells.length <= 3 && /^\s*[+−-]?\s*\d{2,3}(?:[.,]5)?\+?\s*kg\b/i.test(first || '')) {
       category = publishedClass(first.replace('−', '-')) || category;
     }
-    const nation = cells.findIndex(({ text }) => TEAM_SPAIN.test(text));
-    if (nation < 2 || !INDIVIDUAL_PLACE.test(first || '')) continue;
+    if (!INDIVIDUAL_PLACE.test(first || '')) continue;
+    const teamSpain = cells.findIndex(({ text }) => TEAM_SPAIN.test(text));
+    const universityRoster = teamSpain < 0 && rosterMatch(meta.roster, cells[1]?.text, sex, lifterYear(cells[2]?.text, meta.year));
+    const nation = universityRoster ? 3 : teamSpain;
+    if (nation < 3) continue;
     const name = cells.slice(1, nation - 1).map(({ text }) => text).join(' ');
     const yearOfBirth = lifterYear(cells[nation - 1]?.text, meta.year);
     const values = cells.slice(nation + 1);
@@ -176,8 +198,7 @@ function parsePdfScoreRows(rows, meta, context = {}) {
     if (!(bodyweight >= 30 && bodyweight <= 250) || !sex) continue;
     const catLimit = Number(category?.slice(1, -2));
     const weightClass = (category && (category[0] === '+' ? bodyweight > catLimit : bodyweight <= catLimit + 0.01)) ? category
-      : (meta.year <= 2020 ? classLimit(sex, bodyweight, meta.year)
-        : publishedClass('-' + (sex === 'F' ? [43, 47, 52, 57, 63, 69, 76, 84] : [53, 59, 66, 74, 83, 93, 105, 120]).find((value) => bodyweight <= value + 0.01) + 'kg') || (sex === 'F' ? '+84kg' : '+120kg'));
+      : currentClass(sex, bodyweight, meta.year);
     const full = values.length >= 16;
     if (!full && (eventType === 'powerlifting' || values.length < 7)) continue;
     const liftOffsets = eventType === 'powerlifting' ? { squat: 3, bench: 7, deadlift: 11 } :
@@ -194,6 +215,7 @@ function parsePdfScoreRows(rows, meta, context = {}) {
       name, yearOfBirth, sex, category: weightClass, equipment, placing: first, bodyweight, attempts, bestLifts, total,
       ipfgl: meta.year >= 2021 && score > 0 && score <= 150 ? score : null,
       points: meta.year <= 2019 ? score : null,
+      countrySource: universityRoster ? meta.roster.url : null,
     });
     if (report) entries.push(report);
   }
@@ -326,10 +348,19 @@ function archivedRow(cells, header, competitionYear) {
   return { ...format(first, values[1], values[2], values[4], 5), layout };
 }
 
-function archivedAttempts(cells, header, source, layout) {
+function archivedAttempts(cells, header, source, eventType) {
+  const layout = source.layout;
   const totalAt = header.indexOf('total');
   const start = source.column;
   const cellsAt = (indices) => indices.map((i) => cells[i] || { text: '' });
+  const total = historicalNumber(cells[totalAt]?.text);
+  if (eventType === 'bench') {
+    const first = header.findIndex((word) => /^(?:all bench|bp1|1 att)/.test(word));
+    if (first < start || totalAt < first + 3) return null;
+    const attempts = cellsAt([first, first + 1, first + 2]).map(attemptFromCell);
+    const bench = bestOfAttempts(attempts);
+    return { attempts: { bench: attempts }, bestLifts: { bench }, total };
+  }
   if (layout === 'best' || layout === 'publishedBest' || layout === 'ranked') {
     const packed = source.inlineScores || cells;
     const offsets = layout === 'publishedBest' ? [3, 7, 11, 12] : layout === 'ranked' ? [0, 2, 4, 6] : [0, 1, 2, 3];
@@ -345,7 +376,6 @@ function archivedAttempts(cells, header, source, layout) {
   const bench = header.findIndex((word) => /^(?:all )?(?:bench|bp)(?:\b|\d)/.test(word));
   const deadlift = header.findIndex((word) => /^(?:all )?(?:dead|dl)/.test(word));
   if (first < start || bench < first + 3 || deadlift < bench + 3 || totalAt < deadlift + 3) return null;
-  const total = historicalNumber(cells[totalAt]?.text);
   const attempts = Object.fromEntries(MOVEMENTS.map((lift, i) => [lift, cellsAt([0, 1, 2].map((j) => [first, bench, deadlift][i] + j)).map(attemptFromCell)]));
   const bestLifts = Object.fromEntries(MOVEMENTS.map((lift) => [lift, bestOfAttempts(attempts[lift])]));
   if (total > 0 && MOVEMENTS.reduce((sum, lift) => sum + bestLifts[lift], 0) !== total) {
@@ -374,7 +404,8 @@ function parseArchivedTable(rows, meta, sheetName) {
     (/^(?:M\.|MEN)/i.test(sheetName) ? 'M' : /^W\.?\d/i.test(sheetName) ? 'F' : null);
   let sex = initialSex;
   let date = opening.map((line) => readMeetDate(line, year)).find(Boolean) || null;
-  let equipment = equipmentType(archiveTitle) || equipmentType(meta.header) || (year <= 2011 ? 'equipped' : null);
+  let equipment = equipmentType(file) || equipmentType(archiveTitle) || equipmentType(meta.header) || equipmentType(meta.title) ||
+    (year <= 2011 ? 'equipped' : null);
   let title = archiveTitle;
   let category = null;
   let header = [];
@@ -387,7 +418,7 @@ function parseArchivedTable(rows, meta, sheetName) {
       const headingSex = eventSex(line) || (/\b(?:zeny|damy|dames)\b/.test(normalizeName(line)) ? 'F' :
         /\b(?:muzi|heren)\b/.test(normalizeName(line)) ? 'M' : null);
       if (headingSex) sex = headingSex;
-      if (/champion|cup/i.test(line) && !TEAM_SPAIN.test(line) && line.length < 180) {
+      if (/champion|cup|arnold/i.test(line) && !TEAM_SPAIN.test(line) && line.length < 180) {
         title = line;
         equipment = equipmentType(title) || equipment;
         date = readMeetDate(title, year) || date;
@@ -395,7 +426,7 @@ function parseArchivedTable(rows, meta, sheetName) {
       category = publishedClass(line.replace('−', '-')) || category;
     }
     const columns = values.map(normalizeName);
-    const totalIndex = columns.findIndex((column) => /^(?:tot|total)(?: kg)?$/.test(column));
+    const totalIndex = columns.findIndex((column) => /^(?:tot|total|result)(?: kg)?$/.test(column));
     if (totalIndex !== -1 && columns.some((column) => /^(?:name|lifters?|squat|sq|all squat)/.test(column))) {
       columns[totalIndex] = 'total';
       header = columns;
@@ -404,13 +435,16 @@ function parseArchivedTable(rows, meta, sheetName) {
     if (!sex || !equipment) continue;
     const source = archivedRow(cells, header, year);
     if (!source?.name || (source.bodyweight ? !(source.bodyweight >= 30 && source.bodyweight <= 250) : !category || year >= 2011)) continue;
-    const scores = archivedAttempts(cells, header, source, source.layout);
+    const eventType = /bench press|bench.classic|(?:^|_)bp(?:_|\.)/i.test(title + ' ' + file) ? 'bench' : 'powerlifting';
+    const scores = archivedAttempts(cells, header, source, eventType);
     if (!scores) continue;
-    const expectedClass = classLimit(sex, source.bodyweight, year);
+    const expectedClass = currentClass(sex, source.bodyweight, year);
     const validClass = category && (!source.bodyweight || (category[0] === '+' ? source.bodyweight > Number(category.slice(1, -2)) :
       source.bodyweight <= Number(category.slice(1, -2)) + 0.01));
-    const result = federationRow({ ...meta, year, title, date, eventType: 'powerlifting', sourceType: 'archive' }, {
+    const result = federationRow({ ...meta, year, title, date, eventType, sourceType: 'archive' }, {
       ...source, ...scores, sex, equipment, category: validClass ? category : expectedClass,
+      ipfgl: historicalNumber(cells[header.indexOf('ipf gl')]?.text),
+      points: historicalNumber(cells[header.indexOf('w pts')]?.text),
     });
     if (result) entries.push(result);
   }
