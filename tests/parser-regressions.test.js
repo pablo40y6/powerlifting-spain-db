@@ -26,7 +26,7 @@ test('GOODLIFT XLS de Poblete conserva resultados, descalificaciones y fecha de 
     ['Asociacion Espanola Powerlifting'],
     ['Copa de España de Powerlifting y de Press Banca, Poblete (Espana), 17-18.10.2026'],
     ['DETAILED SCORESHEET'], GOODLIFT_HEADER, ['Open'], ['-52kg'],
-    [1, 'Atleta Primera', '01.01.05', 'CLUB', 51.9, 0.25, 5, 110, 115, 120, 2, 67.5, 70, 75, 2, 135, 142.5, '145.0-n', 1, 340, 85],
+    [1, 'Atleta Primera', '01.01.05', 'CLUB', 51.9, 0.25, 5, 110, 115, 120, 2, 67.5, 70, 75, 2, 135, 142.5, '145.0-n', 1, '340.0 -w,wj', 85],
     ['—', 'Atleta Segunda', '01.01.97', 'CLUB', 51.1, 0.25, 8, 110, 120, 127.5, 2, 67.5, 70, 80, 1, '-130', '-140', '-150', '—', 'DSQ', '—'],
     ['Team (points)'], GOODLIFT_HEADER,
     [1, 'Atleta Resumen', '01.01.05', 'CLUB', 51.9, 0.25, 5, 110, 115, 120, 2, 67.5, 70, 75, 2, 135, 142.5, 145, 1, 340, 85],
@@ -801,4 +801,55 @@ test('no inventa nulos si ningun combo de intentos existentes coincide con el to
 
   assert.equal(computedPowerliftingTotalForTest(repaired), 350);
   assert.deepEqual(repaired, attempts);
+});
+
+test('Excel conserva la categoria al continuar una pagina y lee los titulos de equipado', async () => {
+  const workbook = XLSX.utils.book_new();
+  const heading = ['HOMBRES POWERLIFTING RAW'];
+  const header = ['Pos', 'Levantador', 'Año', 'Club', 'Peso', 'Coef.', 'Ord.', 'Sentadilla', '', '', 'Banca', '', '', 'Peso Muerto', '', '', 'Total', 'IPF GL'];
+  const row = [1, 'Atleta Primero', 1990, 'CLUB', 78.6, 1, 12, 180, 190, -200, 110, 120, -125, 210, 220, 230, 540, 75.25];
+  const sheet = XLSX.utils.aoa_to_sheet([
+    [], ['Copa de prueba'], ['Powerlifting'], heading, header, ['-83kg -EQUIPADO-'], row,
+    heading, header, [2, 'Atleta Segundo', ...row.slice(2)],
+    ['HOMBRES POWERLIFTING RAW -MASTER 2-'], header, [1, 'Atleta Tercero', ...row.slice(2)],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Resultados');
+  const entries = await parseDocument(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), '.xlsx', {});
+  assert.deepEqual(entries.map((entry) => entry.category), ['-83kg', '-83kg', null]);
+});
+
+test('PDF con lote negativo conserva coeficiente, club e intentos', () => {
+  const entry = _private.parsePdfAthleteLine(
+    '1 Atleta de Prueba 2001 RSLIF 63,16 0,1596 -10 150,0 160,0 170,0 70,0 77,5 82,5 175,0 182,5 200,0 452,5 72,22',
+    competition(), 'M', '-66kg'
+  );
+  assert.deepEqual([entry.club, entry.bodyweight, entry.order, entry.total, entry.ipfgl], ['RSLIF', 63.16, -10, 452.5, 72.22]);
+});
+
+test('PDF de descalificados conserva los intentos cuando faltan puntuaciones o lote', () => {
+  const metadata = competition();
+  const absentScores = _private.parsePdfAthleteLine(
+    '84 DQ Atleta de Prueba 1997 CLUB 79.8 212 -130.0 -135.0 -135.0 60.0 65.0 -67.5 150.0 157.5 162.5',
+    metadata, 'F', '-84kg', 'powerlifting', true
+  );
+  assert.deepEqual([absentScores.total, absentScores.ipfgl, absentScores.attempts.deadlift[2].weight], [null, null, 162.5]);
+  const absentLot = _private.parsePdfAthleteLine(
+    'DQ Atleta de Prueba 2009 CLUB 117 110.0 120.0 -125.0 -55.0 55.0 -60.0 -130.0 147.5 -165.0 322.5',
+    metadata, 'F', '+84kg', 'powerlifting', true
+  );
+  assert.deepEqual([absentLot.order, absentLot.total, absentLot.ipfgl, absentLot.attempts.squat[0].weight], [null, 322.5, null, 110]);
+  assert.equal(absentLot.isRankable, false);
+});
+
+test('PDF interpreta un bloque de solo banca entre categorias de powerlifting', () => {
+  const entries = _private.parsePdfText([
+    'HOMBRES POWERLIFTING RAW',
+    '-105kg (solo PRESS BANCA)',
+    '1 Atleta de Prueba 2000 MOON 102,91 0,4520 1 --- --- --- 160,0 -170,0 175,0 --- --- --- 175,0 79,10',
+    '-105kg',
+    '1 Segundo Atleta de Prueba 2000 MOON 102,91 0,1300 2 170,0 180,0 190,0 160,0 170,0 175,0 190,0 200,0 210,0 575,0 74,75',
+  ].join('\n'), competition());
+  assert.deepEqual(entries.map((entry) => [entry.eventType, entry.attempts.bench[2].weight, entry.isRankable]), [
+    ['bench', 175, true], ['powerlifting', 175, true],
+  ]);
 });

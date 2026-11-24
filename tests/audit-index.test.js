@@ -405,3 +405,15 @@ test('debug totalAttemptSumMismatch incluye findings completos y resumen agregad
     },
   });
 });
+
+test('el peso fuera de la categoria queda registrado en las filas sin clasificacion ni total', () => {
+  const report = auditIndex({
+    entries: [
+      entry({ sex: 'F', category: '-63kg', bodyweight: 63.15, placing: 'DT', total: 0, isRankable: false, rowKey: 'weigh-in' }),
+    ],
+  });
+
+  const finding = report.findings.find((item) => item.rowKey === 'weigh-in' && item.type === 'non_rankable_category_bodyweight_mismatch');
+  assert.equal(finding?.severity, 'info');
+  assert.equal(finding?.expected, '-69kg');
+});

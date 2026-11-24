@@ -39,7 +39,7 @@ const {
   parseSpanishDate,
 } = require('./utils');
 
-const NON_FINISHING_PLACING = /^(?:DQ|DSQ|DR|RD|TD|DD|DNF|DNS)$/i;
+const NON_FINISHING_PLACING = /^(?:DT|DQ|DSQ|DR|RD|TD|DD|DNF|DNS)$/i;
 const RESULT_PLACING = /^(?:\d+[ºª.]?|DT|DQ|DSQ|DR|RD|TD|DD|DNF|DNS|AI|\*|[-–—]+)$/i;
 
 function buildCompetitionMeta(baseMeta = {}, partial = {}) {
@@ -290,7 +290,7 @@ function movementFromHeaderCell(value) {
   // Leemos el titulo real de la cabecera y solo lo mapeamos internamente para
   // almacenar los intentos en la clave correcta.
   if (/sentadill|squat/.test(normalized)) return 'squat';
-  if (/press\s*(de\s*)?banca|\bbanca(s)?\b|bench/.test(normalized)) return 'bench';
+  if (/press\s*(de\s*)?[bp]anca|\bbanca(s)?\b|bench/.test(normalized)) return 'bench';
   if (/peso\s*muert|dead\s*lift|deadlift/.test(normalized)) return 'deadlift';
 
   return null;
@@ -966,12 +966,10 @@ function parseCategoryParts(raw) {
   return { sign, value };
 }
 
-function categorySectionFromExcelRow(row) {
-  const cells = row.map(normalizeSpaces).filter(Boolean);
-  if (cells.length !== 1) return null;
-  const match = cells[0].match(/^([+-]?\s*\d{2,3}\+?\s*kg)(?:\s*\(\s*solo\s+([^)]+)\))?$/i);
+function parseCategorySection(text) {
+  const match = text.match(/^([+-]?\s*\d{2,3}\+?\s*kg)(?:\s*\(\s*solo\s+([^)]+)\)|\s+(press\s+banca|peso\s+muerto))?(?:\s*-\s*equipad[oa]\s*-)?$/i);
   const category = formatCategoryToken(match?.[1]);
-  return category ? { category, liftType: movementFromHeaderCell(match[2]) } : null;
+  return category ? { category, liftType: movementFromHeaderCell(match[2] || match[3]) } : null;
 }
 
 function sexFromRow(row) {
@@ -1033,7 +1031,7 @@ function goodliftBirthYear(value, competitionYear) {
 
 function scoreFromCell(value, isGoodlift) {
   const text = normalizeSpaces(value);
-  const numeric = isGoodlift ? text.replace(/\s*-\s*[a-z][a-z\d]*$/i, '') : value;
+  const numeric = isGoodlift ? text.replace(/\s*-\s*[a-z][a-z\d]*(?:\s*,\s*[a-z][a-z\d]*)*$/i, '') : value;
   return parseLocaleNumber(numeric);
 }
 
@@ -1074,6 +1072,7 @@ function parseExcelDocument(buffer, baseMeta) {
     let sex = sexFromResultsDocument(baseMeta) || sexFromText(sheetName);
     let currentLayout = null;
     let sectionLiftType = null;
+    let sexSection = null;
 
     for (let index = 0; index < sheetRows.length; index += 1) {
       const rowData = sheetRows[index] || { values: [], cells: [] };
@@ -1086,14 +1085,19 @@ function parseExcelDocument(buffer, baseMeta) {
         currentLayout = null;
         category = null;
         sectionLiftType = null;
+        sexSection = null;
         continue;
       }
       const rowSex = sexFromRow(row) || (currentLayout?.isGoodlift && !row[currentLayout.lifterIndex]
         ? sexFromText(sectionText) : null);
       if (rowSex) {
+        const heading = normalizeName(sectionText);
+        if (rowSex !== sex || heading !== sexSection) {
+          category = null;
+          sectionLiftType = goodliftDocumentEvent(sectionText);
+        }
         sex = rowSex;
-        category = null;
-        sectionLiftType = goodliftDocumentEvent(sectionText);
+        sexSection = heading;
       }
 
       const headerLayout = buildExcelLayoutFromHeaderRow(row);
@@ -1106,7 +1110,8 @@ function parseExcelDocument(buffer, baseMeta) {
         continue;
       }
 
-      const categorySection = categorySectionFromExcelRow(row);
+      const sectionCells = row.map(normalizeSpaces).filter(Boolean);
+      const categorySection = sectionCells.length === 1 ? parseCategorySection(sectionCells[0]) : null;
       if (categorySection) {
         category = categorySection.category;
         sectionLiftType = categorySection.liftType;
@@ -2216,11 +2221,12 @@ function bodyweightMatchesCategory(bodyweight, categoryToken) {
   return bodyweight <= limit.value + 0.01;
 }
 
-function isValidPdfOrder(value) {
-  return Number.isInteger(value) && value > 0 && value <= 99999;
+function isValidPdfOrder(value, allowNegative = false) {
+  const order = allowNegative ? Math.abs(value) : value;
+  return Number.isInteger(order) && order > 0 && order <= 99999;
 }
 
-function findPdfBodyweightOrder(tokens, startIndex, categoryToken = null) {
+function findPdfBodyweightOrder(tokens, startIndex, categoryToken = null, placing = null) {
   let candidate = null;
   for (let index = startIndex; index < tokens.length - 3; index += 1) {
     const bodyweight = parseLocaleNumber(tokens[index]);
@@ -2232,9 +2238,15 @@ function findPdfBodyweightOrder(tokens, startIndex, categoryToken = null) {
     const coefficientToken = tokens[index + 1];
     const looksLikeCoefficient = coefficient !== null && (coefficient > 0 && coefficient < 1 ||
       coefficient >= 0 && coefficient < 2.5 && /[.,]\d{3,}$/.test(coefficientToken));
-    if (looksLikeCoefficient && isValidPdfOrder(goodliftOrder) && goodliftRemaining >= 6) {
+    if (looksLikeCoefficient && isValidPdfOrder(goodliftOrder, true) && goodliftRemaining >= 6) {
       if (candidate) break;
       return { index, bodyweight, coefficient, order: goodliftOrder, attemptsStartIndex: index + 3 };
+    }
+
+    const afterBodyweight = tokens.slice(index + 1);
+    if (/^DQ$/i.test(placing || '') && [9, 10].includes(afterBodyweight.length) &&
+      afterBodyweight.slice(0, 9).every((token) => /^-?\d+[.,]\d+$/.test(token))) {
+      return { index, bodyweight, order: null, attemptsStartIndex: index + 1 };
     }
 
     const adjacentRemaining = tokens.length - (index + 2);
@@ -2315,6 +2327,37 @@ function resolvePdfTotalIpfgl(tokens, hasPointsColumn = false) {
   return { total, ipfgl, statsStartIndex: last - 1 };
 }
 
+function singleLiftPdfAttempts(tokens, liftType) {
+  if (tokens.length === 9) {
+    const offset = liftType === 'bench' ? 3 : 6;
+    const unused = [...tokens.slice(0, offset), ...tokens.slice(offset + 3)];
+    if (unused.every((token) => /^[-–—]+$/.test(token))) {
+      return tokens.slice(offset, offset + 3);
+    }
+  }
+  return tokens.slice(0, 3);
+}
+
+function resolvePdfRowStats(tokens, placing, liftType, bodyweightOrder, hasPointsColumn) {
+  const fields = tokens.slice(bodyweightOrder.attemptsStartIndex);
+  // Compact AEP sheets omit trailing score cells for DQ rows. The remaining
+  // fields are nine signed attempts and, in some sheets, a total without GL.
+  if (
+    /^DQ$/i.test(placing || '') &&
+    liftType === 'powerlifting' &&
+    (fields.length === 9 || fields.length === 10) &&
+    fields.slice(0, 9).some((field) => /^-\d/.test(field)) &&
+    fields.slice(0, 9).every((field) => parseLocaleNumber(field) !== null)
+  ) {
+    return {
+      total: fields.length === 10 ? parseLocaleNumber(fields[9]) : null,
+      ipfgl: null,
+      statsStartIndex: bodyweightOrder.attemptsStartIndex + 9,
+    };
+  }
+  return resolvePdfTotalIpfgl(tokens, hasPointsColumn || fields.length === 15);
+}
+
 function categoryAtStartOfPdfRow(tokens, hasCategoryColumn) {
   if (!hasCategoryColumn && /^\d+$/.test(tokens[0]) && !RESULT_PLACING.test(tokens[1])) return null;
   return formatCategoryToken(tokens[0]);
@@ -2333,13 +2376,13 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
   }
 
   const categoryForBodyweight = fallbackCategory || rowCategory;
-  const bodyweightOrder = findPdfBodyweightOrder(tokens, nameStartIndex + 2, categoryForBodyweight);
+  const bodyweightOrder = findPdfBodyweightOrder(tokens, nameStartIndex + 2, categoryForBodyweight, placing);
   if (!bodyweightOrder) return null;
 
   const split = splitPdfNameAndClubWithoutYear(tokens.slice(nameStartIndex, bodyweightOrder.index));
   if (!split || !split.lifterName || !split.club) return null;
 
-  const totalIpfgl = resolvePdfTotalIpfgl(tokens, hasPointsColumn || tokens.length - bodyweightOrder.attemptsStartIndex === 15);
+  const totalIpfgl = resolvePdfRowStats(tokens, placing, liftType, bodyweightOrder, hasPointsColumn);
   if (!totalIpfgl) return null;
   const { total, ipfgl, statsStartIndex } = totalIpfgl;
 
@@ -2349,7 +2392,7 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
   let movementRanks = null;
 
   if (isSingleLift) {
-    rebuiltAttemptTokens = rawAttemptTokens.slice(0, 3);
+    rebuiltAttemptTokens = singleLiftPdfAttempts(rawAttemptTokens, liftType);
   } else if (rawAttemptTokens.length >= 12) {
     rebuiltAttemptTokens = [
       rawAttemptTokens[0], rawAttemptTokens[1], rawAttemptTokens[2],
@@ -2423,7 +2466,7 @@ function parsePdfOrdinalResult(line, competition, sex) {
 
 function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType = 'powerlifting', hasCategoryColumn = false, hasPointsColumn = false) {
   // Some PDF text exports append an ISO birth date to the name or omit its separator.
-  const normalized = normalizeSpaces(line.replace(/(\p{L})((?:19|20)\d{2})(?=\t|\s+\d+[.,]\d+\s+(?:SNR|SBJ|JUN|OPEN|M[1-4])\b)/giu, '$1 $2'));
+  const normalized = normalizeSpaces(line.replace(/(\p{L})((?:19|20)\d{2})(?=\t|\s+\d+[.,]\d+\s+(?:SNR|SBJ|JUN|OPEN|M[1-4])\b|\s+[a-z0-9]{2,8}\s+\d{2,3}[.,]\d{1,2}\s+\d[.,]\d{3,}\s+-?\d+\s)/giu, '$1 $2'));
   if (liftType === 'powerlifting') {
     const ordinalResult = parsePdfOrdinalResult(normalized, competition, sex);
     if (ordinalResult) return ordinalResult;
@@ -2459,13 +2502,13 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
   const lifterName = tokens.slice(nameStartIndex, yearIndex).join(' ');
 
   const categoryForBodyweight = fallbackCategory || rowCategory;
-  const bodyweightOrder = findPdfBodyweightOrder(tokens, yearIndex + 1, categoryForBodyweight);
+  const bodyweightOrder = findPdfBodyweightOrder(tokens, yearIndex + 1, categoryForBodyweight, placing);
   if (!bodyweightOrder) return null;
 
   const club = normalizeSpaces(tokens.slice(yearIndex + 1, bodyweightOrder.index).join(' '));
   if (!club) return null;
 
-  const totalIpfgl = resolvePdfTotalIpfgl(tokens, hasPointsColumn || tokens.length - bodyweightOrder.attemptsStartIndex === 15);
+  const totalIpfgl = resolvePdfRowStats(tokens, placing, liftType, bodyweightOrder, hasPointsColumn);
   if (!totalIpfgl) return null;
   const { total, ipfgl, statsStartIndex } = totalIpfgl;
 
@@ -2475,7 +2518,7 @@ function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType 
   let movementRanks = null;
 
   if (isSingleLift) {
-    rebuiltAttemptTokens = rawAttemptTokens.slice(0, 3);
+    rebuiltAttemptTokens = singleLiftPdfAttempts(rawAttemptTokens, liftType);
   } else if (rawAttemptTokens.length >= 12) {
     rebuiltAttemptTokens = [
       rawAttemptTokens[0], rawAttemptTokens[1], rawAttemptTokens[2],
@@ -2553,6 +2596,8 @@ function parsePdfText(rawText, baseMeta) {
   }
 
   let inGoodliftDetailedScoresheet = !goodliftText;
+  let tableLiftType = meta.liftType;
+  let sectionLiftType = tableLiftType;
   let inSummary = false;
   let hasCategoryColumn = false;
   const hasPointsColumn = lines.some((line) => /levantador.*\btotal\b.*\bipf\s*gl\s+pt\b/i.test(line));
@@ -2580,33 +2625,84 @@ function parsePdfText(rawText, baseMeta) {
     if (/^MUJERES\b/i.test(line)) {
       currentSex = 'F';
       category = null;
+      tableLiftType = goodliftDocumentEvent(line) || meta.liftType;
+      sectionLiftType = tableLiftType;
       inSummary = false;
     }
     if (/^HOMBRES\b/i.test(line)) {
       currentSex = 'M';
       category = null;
+      tableLiftType = goodliftDocumentEvent(line) || meta.liftType;
+      sectionLiftType = tableLiftType;
       inSummary = false;
     }
     if (inSummary) continue;
 
-    const lineCategory = formatCategoryToken(line);
+    const categorySection = parseCategorySection(line);
+    const lineCategory = categorySection?.category || formatCategoryToken(line);
     if (lineCategory) {
       category = lineCategory;
+      sectionLiftType = categorySection?.liftType || tableLiftType;
       continue;
     }
 
     if (!isPotentialAthleteLine(line)) continue;
-    const athlete = parsePdfAthleteLine(originalLine, competition, currentSex, category, meta.liftType, hasCategoryColumn, hasPointsColumn);
+    const athlete = parsePdfAthleteLine(originalLine, competition, currentSex, category, sectionLiftType, hasCategoryColumn, hasPointsColumn);
     if (athlete) entries.push(athlete);
   }
 
   return repairEntriesUsingMovementRanks(entries);
 }
 
+// El PDF dibuja los tachados por separado. Estas filas se cotejaron con el
+// acta visible. El total y los pesos protegen contra revisiones de la fila.
+const PDF_VERIFIED_FAILED_ATTEMPTS = {
+  'https://powerliftingspain.es/wp-content/uploads/2026/05/Absoluto-Masters-Hombres-v2.pdf': {
+    'alamillo bartolome javier': { total: 370, attempts: { bench: [80, 85, -92.5] } },
+    'pajuelo munoz angel luis': { total: 595, attempts: { squat: [-200, 200, 215], deadlift: [225, 240, -245] } },
+    'rodriguez ibanez jose francisco': { total: 437.5, attempts: { squat: [-142.5, 152.5, 162.5], bench: [95, 100, -105] } },
+  },
+  'https://powerliftingspain.es/wp-content/uploads/2022/05/Clasificacion_AEP-2_Open_Andalucia_Almensilla_2022-05-15_mas.pdf': {
+    'de los santos dominguez juan alberto': { total: 500, attempts: { bench: [100, 107.5, -112.5], deadlift: [-197.5, 197.5, 217.5] } },
+  },
+  'https://powerliftingspain.es/wp-content/uploads/2022/09/Clasificacion_AEP-2_Regional_Catalunya_2022_banca.pdf': {
+    'mario perez sexer': { total: 140, attempts: { bench: [140, -145, -145] } },
+  },
+};
+
+function applyVerifiedPdfAttempts(entries, resultsUrl) {
+  const corrections = PDF_VERIFIED_FAILED_ATTEMPTS[resultsUrl];
+  if (!corrections) return entries;
+
+  for (const entry of entries) {
+    const correction = corrections[entry.athleteNameNormalized];
+    if (!correction || entry.total !== correction.total) continue;
+    const movements = Object.entries(correction.attempts);
+    const weightsMatch = movements.every(([movement, weights]) => {
+      const attempts = entry.attempts[movement];
+      return attempts?.length === weights.length && weights.every((weight, index) => attempts[index].weight === Math.abs(weight));
+    });
+    if (!weightsMatch) continue;
+
+    for (const [movement, weights] of movements) {
+      entry.attempts[movement] = weights.map((weight, index) => ({
+        ...entry.attempts[movement][index],
+        good: weight > 0,
+      }));
+    }
+  }
+  return entries;
+}
+
 async function parsePdfDocument(buffer, baseMeta) {
   const parser = new PDFParse({ data: buffer });
-  const parsed = await parser.getText();
-  return parsePdfText(String(parsed.text || ''), baseMeta);
+  try {
+    const parsed = await parser.getText();
+    const entries = parsePdfText(String(parsed.text || ''), baseMeta);
+    return applyVerifiedPdfAttempts(entries, baseMeta.resultsUrl);
+  } finally {
+    await parser.destroy();
+  }
 }
 
 async function parseDocument(buffer, extension, baseMeta) {

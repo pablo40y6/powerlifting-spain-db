@@ -217,7 +217,7 @@ function auditColumnStructure(entry) {
       findings.push(makeFinding(entry, 'error', 'score_column_invalid', `La columna ${field} contiene un valor no válido.`, { value: entry[field] }));
     }
   }
-  if (entry.isRankable && /^(?:DQ|DSQ|DR|RD|TD|DD|DNF|DNS)$/i.test(entry.placing || '')) {
+  if (entry.isRankable && /^(?:DT|DQ|DSQ|DR|RD|TD|DD|DNF|DNS)$/i.test(entry.placing || '')) {
     findings.push(makeFinding(entry, 'error', 'rankable_disqualified_result', 'Un resultado descalificado o retirado figura en la clasificación.', { value: entry.placing }));
   }
   return findings;
@@ -236,7 +236,13 @@ function auditCategory(entry) {
     findings.push(makeFinding(entry, 'error', 'category_invalid', 'Categoría no reconocida para el sexo indicado.', { value: entry.category, expected }));
   }
   if (shouldReportCategoryBodyweightMismatch(entry.sex, category, bw, expected)) {
-    findings.push(makeFinding(entry, 'warning', 'category_bodyweight_mismatch', 'Categoría incompatible con el peso corporal.', { value: { bodyweight: bw, category: entry.category, sex: entry.sex }, expected }));
+    const unrankedWithoutTotal = !entry.isRankable && !(toNumber(entry.total) > 0) && /^(?:DT|[-–—]+)$/i.test(entry.placing || '');
+    const value = { bodyweight: bw, category: entry.category, sex: entry.sex };
+    if (unrankedWithoutTotal) {
+      findings.push(makeFinding(entry, 'info', 'non_rankable_category_bodyweight_mismatch', 'Peso fuera de la categoría inscrita en una fila sin total ni clasificación.', { value, expected }));
+    } else {
+      findings.push(makeFinding(entry, 'warning', 'category_bodyweight_mismatch', 'Categoría incompatible con el peso corporal.', { value, expected }));
+    }
   }
   return findings;
 }
