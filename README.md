@@ -106,3 +106,25 @@ temporada y plazas. Los campeonatos internacionales reconocidos por la EPF o la
 IPF figuran entre las pruebas admitidas por la guía para acreditar la mínima Open.
 La vigencia que muestra el Top 50 se refiere a su ventana temporal. Cada
 convocatoria determina los requisitos definitivos de inscripción.
+
+## Archivo histórico y clubes
+
+El buscador incorpora el [archivo de resultados de Power Hispania](https://www.powerhispania.net/Campeonatos.htm)
+de 1993 a 2020 y lo complementa con el archivo AEP de OpenPowerlifting. Se
+conservan las categorías de la época y las puntuaciones originales en la ficha.
+Los campeonatos internacionales IPF y EPF amplían la consulta a las marcas
+españolas localizadas desde 1982. La fecha queda vacía cuando solo consta el año.
+El índice enumera los enlaces inaccesibles y los documentos históricos que no se
+pudieron importar con fiabilidad en historicalCoverage.
+
+La vista **Clubes** cruza los [listados de la AEP](https://powerliftingspain.es/informacion-sobre-afiliaciones-de-clubs/)
+con las siglas publicadas en las actas. Se mantiene el texto del acta en cada
+resultado. Los códigos ambiguos se resuelven con la leyenda del documento
+correspondiente. Las denominaciones sin correspondencia verificada se muestran
+con su fuente para facilitar la revisión.
+
+El Top 50 requiere identificación como ESP en un resultado, una representación
+internacional o el [registro de récords de España](https://powerliftingspain.es/records-aep/).
+La coincidencia de atleta se comprueba con nombre, sexo y año de nacimiento
+cuando se publica. Las actas sin nacionalidad siguen disponibles en el
+buscador. Un club afiliado a la AEP por sí solo no acredita la nacionalidad.

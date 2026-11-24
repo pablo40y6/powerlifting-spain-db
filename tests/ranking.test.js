@@ -18,7 +18,7 @@ function mark(overrides = {}) {
   return {
     athleteId: 'lifter', athleteName: 'Atleta de Prueba', sex: 'F', category: '-69kg',
     competitionDate: '2026-06-10', equipment: 'raw', isRankable: true, bodyweight: 65,
-    eventType: 'powerlifting', total: 400, ipfgl: 84,
+    eventType: 'powerlifting', total: 400, ipfgl: 84, country: 'ESP',
     attempts: { bench: [{ weight: 100, good: true }, { weight: 115, good: false }] },
     ...overrides,
   };
@@ -32,6 +32,8 @@ test('la banca mezcla ambas pruebas, con una sola marca vigente y válida por at
     mark({ bestLifts: { bench: 150 }, equipment: 'equipped' }),
     mark({ bestLifts: { bench: 180 }, competitionDate: '2026-11-25' }),
     mark({ athleteId: 'guest', bestLifts: { bench: 125 }, placing: 'AI' }),
+    mark({ athleteId: 'france', bestLifts: { bench: 170 }, country: 'FRA' }),
+    mark({ athleteId: 'unknown', bestLifts: { bench: 180 }, country: null }),
     mark({ athleteId: 'second', bestLifts: { bench: 90 }, competitionDate: '2025-05-24' }),
     mark({ athleteId: 'review', bestLifts: { bench: 150 }, sourceReview: {} }),
   ];

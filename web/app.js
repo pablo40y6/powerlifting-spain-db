@@ -2,6 +2,7 @@ const state = {
   index: null,
   rows: [],
   filtered: [],
+  clubs: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -68,6 +69,12 @@ function renderRanking() {
     if (row.rankingAthleteId) athlete.dataset.rankingAthlete = row.rankingAthleteId;
     athlete.textContent = row.athleteName;
     nameCell.appendChild(athlete);
+    if (clubName(row)) {
+      const club = document.createElement('small');
+      club.className = 'ranking-context muted';
+      club.textContent = clubName(row);
+      nameCell.appendChild(club);
+    }
     rankingCell(tr, `${formatNumber(value, points ? 3 : 2)} ${points ? 'GL' : 'kg'}`, 'numeric');
     const dateCell = rankingCell(tr, formatDate(row.competitionDate, row.competitionYear));
     if (row.competitionDateApproximate) {
@@ -92,13 +99,64 @@ function renderRanking() {
 }
 
 function switchView() {
-  const showRanking = location.hash === '#ranking';
-  $('searchView').hidden = showRanking;
-  $('rankingView').hidden = !showRanking;
-  $('searchViewLink').removeAttribute('aria-current');
-  $('rankingViewLink').removeAttribute('aria-current');
-  $(showRanking ? 'rankingViewLink' : 'searchViewLink').setAttribute('aria-current', 'page');
+  const views = { '#buscador': 'searchView', '#ranking': 'rankingView', '#clubes': 'clubsView' };
+  const selected = views[location.hash] || 'searchView';
+  for (const id of Object.values(views)) {
+    $(id).hidden = id !== selected;
+    const tab = $(id + 'Link');
+    if (id === selected) tab.setAttribute('aria-current', 'page');
+    else tab.removeAttribute('aria-current');
+  }
   renderRanking();
+  renderClubs();
+}
+
+function clubName(row) {
+  return state.clubs.get(row.clubId)?.name || row.club || '';
+}
+
+function renderClubs() {
+  if (!state.index || $('clubsView').hidden) return;
+  const { clubs = [], unresolved = [] } = state.index.clubCatalog || {};
+  const query = normalize($('clubsSearch').value);
+  const filter = $('clubsStatus').value;
+  const matching = [...clubs.map((club) => ({ ...club, status: club.active ? 'active' : 'history' })),
+    ...unresolved.map((club) => ({ ...club, status: 'pending' }))].filter((club) => {
+    const keywords = [club.name, club.registered, club.region, ...(club.aliases || [])].filter(Boolean).join(' ');
+    return (!filter || club.status === filter) && (!query || allTokensPresent(query, keywords) ||
+      normalize(keywords).replace(/ /g, '').includes(query.replace(/ /g, '')));
+  });
+  $('clubsSummary').textContent = clubs.length.toLocaleString('es-ES') + ' clubes identificados · ' +
+    unresolved.length.toLocaleString('es-ES') + ' nombres pendientes · ' + matching.length.toLocaleString('es-ES') + ' en la vista';
+  const body = $('clubsBody');
+  body.replaceChildren();
+  for (const club of matching) {
+    const row = document.createElement('tr');
+    const name = rankingCell(row, club.name);
+    const status = document.createElement('small');
+    status.className = 'ranking-context muted';
+    status.textContent = { active: 'Listado vigente AEP', history: 'Fuente histórica AEP', pending: 'Nombre pendiente de contrastar' }[club.status];
+    name.appendChild(status);
+    if (club.registered && normalize(club.registered) !== normalize(club.name)) {
+      const official = document.createElement('small');
+      official.className = 'ranking-context';
+      official.textContent = club.registered;
+      name.appendChild(official);
+    }
+    rankingCell(row, (club.aliases || []).filter((alias) => normalize(alias) !== normalize(club.name)).join(' · ') || '—');
+    rankingCell(row, uniqueSorted([club.region, club.city]).join(' · ') || '—');
+    const count = rankingCell(row, club.count.toLocaleString('es-ES'));
+    if (club.firstYear) {
+      const years = document.createElement('small');
+      years.className = 'ranking-context muted';
+      years.textContent = club.firstYear === club.lastYear ? club.firstYear : club.firstYear + '–' + club.lastYear;
+      count.appendChild(years);
+    }
+    const source = rankingCell(row, '');
+    source.innerHTML = (club.sources || [{ url: club.source }]).slice(0, 3).map((item) =>
+      link(item.url, item.year ? 'AEP ' + item.year : 'Acta')).join(' ');
+    body.appendChild(row);
+  }
 }
 
 function normalize(value) {
@@ -181,7 +239,7 @@ function hydrateFilters() {
 }
 
 function matches(row) {
-  if (row.isIndividualResult === false || row.isRankable === false) return false;
+  if (row.isIndividualResult === false || row.isRankable === false || (row.country && row.country !== 'ESP')) return false;
 
   const athlete = normalize(controls.athlete.value);
   const club = normalize(controls.club.value);
@@ -192,7 +250,7 @@ function matches(row) {
   const eventType = controls.eventType.value;
 
   return (!athlete || allTokensPresent(athlete, row.athleteName)) &&
-    (!club || normalize(row.club).includes(club)) &&
+    (!club || [row.club, clubName(row), ...(state.clubs.get(row.clubId)?.aliases || [])].some((name) => normalize(name).includes(club))) &&
     (!competition || normalize(row.competitionName).includes(competition)) &&
     (!category || row.category === category) &&
     (!sex || row.sex === sex) &&
@@ -205,7 +263,7 @@ function compareRows(a, b) {
     case 'ipfgl-desc': return (b.ipfgl || 0) - (a.ipfgl || 0);
     case 'date-desc': return String(b.competitionDate || '').localeCompare(String(a.competitionDate || ''));
     case 'athlete-asc': return String(a.athleteName || '').localeCompare(String(b.athleteName || ''), 'es');
-    case 'club-asc': return String(a.club || '').localeCompare(String(b.club || ''), 'es');
+    case 'club-asc': return clubName(a).localeCompare(clubName(b), 'es');
     case 'total-desc':
     default: return (b.total || 0) - (a.total || 0);
   }
@@ -213,12 +271,19 @@ function compareRows(a, b) {
 
 function link(url, label) {
   if (!url) return '';
+  try { if (!['https:', 'http:'].includes(new URL(url).protocol)) return ''; }
+  catch { return ''; }
   const a = document.createElement('a');
   a.href = url;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
   a.textContent = label;
   return a.outerHTML;
+}
+
+function escapeHtml(value) {
+  const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(value ?? '').replace(/[&<>"']/g, (character) => entities[character]);
 }
 
 function renderTable() {
@@ -236,13 +301,13 @@ function renderTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${formatDate(row.competitionDate, row.competitionYear)}</td>
-      <td><button class="link-button" data-athlete="${row.athleteId}">${row.athleteName || '—'}</button></td>
-      <td>${row.club || '—'}</td>
+      <td><button class="link-button" data-athlete="${escapeHtml(row.athleteId)}">${escapeHtml(row.athleteName || '—')}</button></td>
+      <td>${escapeHtml(clubName(row) || '—')}</td>
       <td>${row.sex || '—'}</td>
       <td>${row.category || '—'}</td>
       <td class="numeric">${formatNumber(row.total)}</td>
       <td class="numeric">${formatNumber(row.ipfgl, 2)}</td>
-      <td>${row.competitionName || '—'}${row.sourceFederation ? ` <small class="muted">· ${row.sourceFederation}</small>` : ''}</td>
+      <td>${escapeHtml(row.competitionName || '—')}${row.sourceFederation ? ` <small class="muted">· ${escapeHtml(row.sourceFederation)}</small>` : ''}</td>
       <td>${eventTypeLabel(eventTypeFromRow(row))}</td>
       <td class="links-cell">${link(row.meetPageUrl, 'Competición')} ${link(row.resultsUrl, 'Resultados')}</td>
     `;
@@ -292,7 +357,7 @@ function attemptText(attempt) {
 function renderAttempts(entry) {
   const labels = entry.attempts?.__labels || { squat: 'Sentadilla', bench: 'Banca', deadlift: 'Peso muerto' };
   return ['squat', 'bench', 'deadlift'].map((lift) => `
-    <tr><th>${labels[lift] || lift}</th><td>${(entry.attempts?.[lift] || []).length
+    <tr><th>${escapeHtml(labels[lift] || lift)}</th><td>${(entry.attempts?.[lift] || []).some((attempt) => attempt?.weight != null)
       ? entry.attempts[lift].map(attemptText).join('')
       : Number.isFinite(entry.bestLifts?.[lift]) ? `Mejor válido · ${formatNumber(entry.bestLifts[lift], 2)} kg` : '—'}</td></tr>
   `).join('');
@@ -327,8 +392,8 @@ function showAthlete(athleteId, rankingAthleteId) {
   const bestTotal = bestBy(rows, 'total');
   const bestGl = bestBy(rows, 'ipfgl');
   $('athleteDetail').innerHTML = `
-    <h2>${rows[0].athleteName}</h2>
-    <p class="muted">${uniqueSorted(rows.map((row) => row.club)).join(' · ') || 'Club no detectado'}</p>
+    <h2>${escapeHtml(rows[0].athleteName)}</h2>
+    <p class="muted">${escapeHtml(uniqueSorted(rows.map(clubName)).join(' · ') || 'Club no detectado')}</p>
     <div class="detail-stats">
       <div><span>Resultados</span><strong>${rows.length}</strong></div>
       <div><span>Mejor total</span><strong>${formatNumber(bestTotal?.total)} kg</strong></div>
@@ -336,11 +401,13 @@ function showAthlete(athleteId, rankingAthleteId) {
     </div>
     ${rows.map((row) => `
       <article class="detail-card">
-        <h3>${row.competitionName || 'Competición'}</h3>
-        <p class="muted">${formatDate(row.competitionDate, row.competitionYear)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
+        <h3>${escapeHtml(row.competitionName || 'Competición')}</h3>
+        <p class="muted">${formatDate(row.competitionDate, row.competitionYear)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${escapeHtml(clubName(row) || '—')}</p>
         <table class="attempt-table"><tbody>${renderAttempts(row)}</tbody></table>
         ${row.sourceReview ? renderSourceReview(row.sourceReview) : row.isRankable === false ? '<p class="muted"><strong>No rankeable:</strong> resultado incompleto o no individual.</p>' : ''}
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
+        ${Number.isFinite(row.historicalPoints) ? `<p class="muted">${escapeHtml(row.historicalPointsLabel || 'Puntos del acta')} · ${formatNumber(row.historicalPoints, 2)}</p>` : ''}
+        ${row.countrySource && row.country === 'ESP' ? `<p class="links-cell">${link(row.countrySource, 'Fuente que acredita a España')}</p>` : ''}
         <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${row.meetPageUrl !== row.resultsUrl ? link(row.resultsUrl, 'Documento de resultados') : ''}
           ${(row.officialResultsUrls || []).map((url, index) => link(url, `Acta federativa ${index + 1}`)).join(' ')}
         </p>
@@ -355,6 +422,7 @@ async function loadIndex() {
   if (!response.ok) throw new Error('No se pudo cargar data/index.json. Ejecuta npm run build:index y npm run build:web.');
   state.index = await response.json();
   state.rows = flattenIndex(state.index);
+  state.clubs = new Map((state.index.clubCatalog?.clubs || []).map((club) => [club.id, club]));
   $('indexMeta').innerHTML = `<strong>${state.index.athleteCount?.toLocaleString('es-ES') || state.rows.length}</strong> atletas · <strong>${state.index.entryCount?.toLocaleString('es-ES') || state.rows.length}</strong> resultados<br><span>Actualizado: ${new Date(state.index.builtAt).toLocaleString('es-ES')}</span>`;
   const internationalCount = state.index.internationalEntryCount || 0;
   if (internationalCount) {
@@ -364,11 +432,19 @@ async function loadIndex() {
     sources.textContent = `${internationalCount.toLocaleString('es-ES')} resultados internacionales${missing ? ' · fuentes pendientes de actualización' : ''}`;
     $('indexMeta').appendChild(sources);
   }
+  if (state.index.historicalEntryCount) {
+    const archive = document.createElement('small');
+    archive.className = 'ranking-context';
+    archive.textContent = state.index.historicalEntryCount.toLocaleString('es-ES') + ' resultados anteriores a 2021';
+    $('indexMeta').appendChild(archive);
+  }
   hydrateFilters();
   applyFilters();
   renderRanking();
+  renderClubs();
 }
 
+for (const id of ['clubsSearch', 'clubsStatus']) $(id).addEventListener('input', renderClubs);
 for (const control of Object.values(controls)) control.addEventListener('input', applyFilters);
 for (const control of Object.values(rankingControls)) control.addEventListener('change', () => {
   if (control === rankingControls.sex) hydrateRankingCategories();

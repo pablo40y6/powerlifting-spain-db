@@ -115,8 +115,9 @@ function looksLikeClubAthleteName(name) {
   const tokens = raw.split(/\s+/).filter(Boolean);
   const allCaps = lettersOnly.length >= 8 && upperLetters.length === lettersOnly.length;
   const hasPersonStructure = tokens.length >= 2 && tokens.length <= 5 && tokens.every((token) => {
+    if (/^(?:\p{Lu}\.)+(?:\p{Lu}\.?)?$/u.test(token)) return true;
     const cleaned = token.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
-    return /\p{L}{2,}/u.test(cleaned) && /^[\p{L}]+(?:[-'’][\p{L}]+)*$/u.test(cleaned);
+    return /\p{L}{2,}/u.test(cleaned) && /^[\p{L}]+(?:\.?[-'’][\p{L}]+)*$/u.test(cleaned);
   });
   return allCaps && !hasPersonStructure;
 }
@@ -138,8 +139,11 @@ function bestAttempt(attempts) {
 }
 
 function officialBestLift(entry, movement) {
-  if (!['IPF', 'EPF'].includes(entry.sourceFederation) || entry.country !== 'ESP' ||
-      !/^https:\/\/(?:www\.openpowerlifting\.org|ipf\.powerlifting\.sport)\//.test(entry.resultsUrl || '')) return null;
+  const archiveSource = entry.competitionYear < 2021 && entry.resultArchive &&
+    /^https?:\/\/(?:www\.)?(?:openpowerlifting\.org|powerhispania\.net|powerliftingspain\.es)\//.test(entry.resultsUrl || '');
+  const internationalSource = ['IPF', 'EPF'].includes(entry.sourceFederation) && entry.country === 'ESP' &&
+    /^https:\/\/(?:www\.openpowerlifting\.org|ipf\.powerlifting\.sport)\//.test(entry.resultsUrl || '');
+  if (!archiveSource && !internationalSource) return null;
   const weight = entry.bestLifts?.[movement];
   return Number.isFinite(weight) && weight > 0 ? weight : null;
 }
@@ -236,6 +240,15 @@ function auditColumnStructure(entry) {
 function auditCategory(entry, reviewedCategory = false) {
   const findings = [];
   const bw = toNumber(entry.bodyweight);
+  if (entry.competitionYear < 2021 && entry.resultArchive) {
+    const category = normalizeCategory(entry.category);
+    const limit = Number(category.slice(1, -2));
+    if (bw && category && (!/^[+-]\d+(?:\.5)?kg$/.test(category) || limit < 40 || limit > 145 ||
+        (category.startsWith('+') ? bw <= limit : bw > limit + EPSILON))) {
+      findings.push(makeFinding(entry, 'warning', 'historical_category_bodyweight_mismatch', 'La categoría histórica no contiene el peso publicado.', { value: { category, bodyweight: bw } }));
+    }
+    return findings;
+  }
   const expected = expectedCategoryForBodyweight(entry.sex, bw);
   const category = normalizeCategory(entry.category);
   if (bw && entry.sex && !category && !reviewedCategory) {
@@ -314,7 +327,11 @@ function auditTotals(entry) {
   if (total !== null && total > 0) {
     if (eventType === 'powerlifting' && hasValidPowerliftingTotalFromAttempts(entry)) {
       const computed = computedPowerliftingTotal(entry);
-      if (Math.abs(total - computed) > EPSILON) {
+      const archived1988 = entry.resultsUrl === 'https://www.openpowerlifting.org/m/epf/8801' &&
+        normalizedKey(entry.athleteName) === 'eduardo cruz rubio 1' && total === 705 && Math.abs(computed - 705.4) < EPSILON;
+      if (archived1988) {
+        findings.push(makeFinding(entry, 'info', 'historical_published_total_difference', 'El archivo de 1988 publica 705 kg y los mejores levantamientos suman 705,4 kg. Se conservan ambos valores.', { value: total, expected: computed }));
+      } else if (Math.abs(total - computed) > EPSILON) {
         findings.push(makeFinding(entry, 'warning', 'total_attempt_sum_mismatch', 'El total no coincide con la suma de mejores intentos válidos.', { value: total, expected: computed }));
       }
     } else if (['squat', 'bench', 'deadlift'].includes(eventType)) {
@@ -349,8 +366,9 @@ function auditDates(entry, currentYear = CURRENT_YEAR) {
   if (!entry.competitionDate && !entry.competitionYear) {
     findings.push(makeFinding(entry, 'warning', 'date_and_year_missing', 'competitionDate y competitionYear están vacíos.'));
   }
-  if (year !== null && (year < 2010 || year > currentYear + 1)) {
-    findings.push(makeFinding(entry, 'warning', 'competition_year_out_of_range', 'competitionYear fuera de rango razonable.', { value: year, expected: `2010-${currentYear + 1}` }));
+  const firstYear = entry.resultArchive ? 1982 : 2010;
+  if (year !== null && (year < firstYear || year > currentYear + 1)) {
+    findings.push(makeFinding(entry, 'warning', 'competition_year_out_of_range', 'competitionYear fuera de rango razonable.', { value: year, expected: `${firstYear}-${currentYear + 1}` }));
   }
   if (dateYear && year !== null && Number(dateYear) !== year) {
     findings.push(makeFinding(entry, 'warning', 'date_year_mismatch', 'competitionDate no coincide con competitionYear.', { value: entry.competitionDate, expected: year }));
@@ -373,6 +391,7 @@ function approximateDuplicateKey(entry) {
     entry.sex || '',
     entry.yearOfBirth || '',
     entry.eventType || entry.liftType || 'powerlifting',
+    ...(entry.competitionYear < 2021 && entry.resultArchive ? [entry.equipment || ''] : []),
     total === null ? '' : total.toFixed(2),
     roundedBw,
   ].join('|');
@@ -729,6 +748,22 @@ function auditIndex(index, options = {}) {
     );
   }
   findings.push(...auditDuplicates(entries));
+  const catalog = index?.clubCatalog;
+  if (catalog) {
+    const byId = new Map(catalog.clubs.map((club) => [club.id, club]));
+    const counted = new Map();
+    for (const entry of entries.filter((row) => row.clubId)) {
+      if (!byId.has(entry.clubId)) findings.push(makeFinding(entry, 'error', 'club_without_catalog_entry', 'El identificador de club no existe en el catálogo.', { value: entry.clubId }));
+      counted.set(entry.clubId, (counted.get(entry.clubId) || 0) + 1);
+    }
+    for (const club of catalog.clubs) {
+      const actual = counted.get(club.id) || 0;
+      if (actual !== club.count) findings.push(makeFinding(null, 'error', 'club_count_mismatch', 'El recuento del club no coincide con sus resultados.', { value: club.name, expected: actual }));
+    }
+    const categorized = [...counted.values(), ...catalog.unresolved.map((club) => club.count), catalog.missing, catalog.special]
+      .reduce((sum, count) => sum + count, 0);
+    if (categorized !== entries.length) findings.push(makeFinding(null, 'error', 'club_coverage_mismatch', 'El catálogo no da cuenta de todos los resultados.', { value: categorized, expected: entries.length }));
+  }
 
   const athletes = new Set(entries.map((entry) => entry.athleteId || normalizedKey(entry.athleteNameNormalized || entry.athleteName)).filter(Boolean));
   const byType = {};
@@ -761,6 +796,18 @@ function auditIndex(index, options = {}) {
       }),
     },
     columns: summarizeColumns(entries),
+    ...(catalog && { clubCoverage: {
+      identifiedClubs: catalog.clubs.length,
+      identifiedResults: catalog.clubs.reduce((sum, club) => sum + club.count, 0),
+      activeClubs: catalog.clubs.filter((club) => club.active).length,
+      unresolved: catalog.unresolved,
+      missing: catalog.missing,
+      special: catalog.special,
+    } }),
+    ...(index?.historicalCoverage && { historicalCoverage: {
+      ...index.historicalCoverage,
+      results: entries.filter((entry) => entry.competitionYear < 2021).length,
+    } }),
     bySource: [...bySource.values()].sort((a, b) => b.findings - a.findings),
     regression: buildRegressionSection(entries),
     findings,
@@ -788,6 +835,22 @@ function renderMarkdown(report) {
   lines.push(`- Info: ${report.summary.info}`);
   lines.push(`- Warnings: ${report.summary.warnings}`);
   lines.push(`- Errores críticos: ${report.summary.errors}`, '');
+  if (report.clubCoverage) {
+    const clubs = report.clubCoverage;
+    lines.push('## Clubes', '',
+      `- ${clubs.identifiedResults} resultados vinculados a ${clubs.identifiedClubs} clubes. ${clubs.activeClubs} clubes figuran en el listado vigente.`,
+      `- ${clubs.unresolved.length} denominaciones pendientes en ${clubs.unresolved.reduce((sum, club) => sum + club.count, 0)} resultados.`,
+      `- ${clubs.missing} resultados sin club. ${clubs.special} con selección, inscripción independiente u otro caso especial.`,
+      '', '| Denominación pendiente | Resultados | Fuente |', '| --- | ---: | --- |');
+    for (const club of clubs.unresolved) lines.push(`| ${club.name.replace(/\|/g, '\\|')} | ${club.count} | [Acta](${club.source}) |`);
+    lines.push('');
+  }
+  if (report.historicalCoverage) {
+    const historical = report.historicalCoverage;
+    lines.push('## Archivo histórico', '',
+      `- ${historical.results} resultados de antes de 2021.`,
+      `- ${historical.documents} enlaces revisados. ${historical.unavailable.length} sin acceso y ${historical.unparsed.length} sin filas importadas.`, '');
+  }
   lines.push('## Hallazgos por tipo', '');
   lines.push('| Tipo | Info | Warnings | Errores | Total |');
   lines.push('| --- | ---: | ---: | ---: | ---: |');

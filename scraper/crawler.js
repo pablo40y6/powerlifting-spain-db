@@ -6,8 +6,11 @@ const cheerio = require('cheerio');
 const pLimit = require('p-limit').default;
 const sanitizeFilename = require('sanitize-filename');
 const { reviewResult } = require('./reviewed-results');
+const { fetchHistory, mergeHistory } = require('./history');
+const { fetchAffiliations, clubDirectory } = require('./clubs');
+const { fetchRecordEvidence, applyCountryEvidence } = require('./countries');
 const {
-  fetchInternationalResults, alignInternationalNames, findAepInternationalMeets, aepInternationalLinks,
+  fetchInternationalResults, fetchAepArchive, alignInternationalNames, findAepInternationalMeets, aepInternationalLinks,
   connectAepInternationalPages, classifyAepInternational, mergeInternationalResults, assignRankingIdentities,
 } = require('./international');
 const { parseDocument, mergeAthleteEntries, _private: parserPrivate } = require('./parser');
@@ -30,6 +33,7 @@ const INDEX_FILE = path.join(DATA_DIR, 'index.json');
 const COMPETITION_YEARS = Array.from(
   { length: new Date().getUTCFullYear() - 2020 }, (_, index) => new Date().getUTCFullYear() - index
 );
+const ARCHIVE_YEARS = [...COMPETITION_YEARS, ...Array.from({ length: 39 }, (_, index) => 2020 - index)];
 const SEED_YEAR_PAGES = COMPETITION_YEARS.map(
   (year) => `https://powerliftingspain.es/campeonatos-${year >= 2023 ? 'ano-' : ''}${year}/`
 );
@@ -284,6 +288,10 @@ function entryToAthleteCard(entry) {
     competitionYear: entry.competition.year,
     equipment: entry.equipment || null,
     ...(entry.country && { country: entry.country }),
+    ...(entry.countrySource && { countrySource: entry.countrySource }),
+    ...(entry.clubId && { clubId: entry.clubId }),
+    ...(entry.historicalPoints != null && { historicalPoints: entry.historicalPoints, historicalPointsLabel: entry.historicalPointsLabel }),
+    ...(entry.historicalCategoryRecorded && { historicalCategoryRecorded: entry.historicalCategoryRecorded }),
     ...(entry.rankingAthleteId && { rankingAthleteId: entry.rankingAthleteId }),
     ...(entry.sourceFederation && {
       sourceFederation: entry.sourceFederation,
@@ -385,9 +393,13 @@ async function buildIndex({ onProgress } = {}) {
     if (onProgress) onProgress({ ...state });
   };
 
-  const internationalBuild = fetchInternationalResults(
-    async (url) => Buffer.from((await client.get(url)).data), COMPETITION_YEARS, (warning) => state.warnings.push(warning)
-  );
+  const download = async (url) => Buffer.from((await client.get(url)).data);
+  const warn = (warning) => state.warnings.push(warning);
+  const internationalBuild = fetchInternationalResults(download, ARCHIVE_YEARS, warn);
+  const historicalBuild = fetchHistory(download, parseDocument, warn);
+  const secondaryArchive = fetchAepArchive(download, ARCHIVE_YEARS, warn);
+  const affiliations = fetchAffiliations((url) => fetchBufferWithCache(client, url), warn);
+  const nationalityRecords = fetchRecordEvidence((url) => fetchBufferWithCache(client, url), warn);
 
   const discoveredPages = new Map();
   const directDocs = new Map();
@@ -452,13 +464,19 @@ async function buildIndex({ onProgress } = {}) {
   log();
 
   const rawEntries = [];
+  const legends = new Map();
   await Promise.all(
     Array.from(allDocs.values()).map((docMeta) =>
       limit(async () => {
         try {
           const buffer = await fetchBufferWithCache(client, docMeta.resultsUrl);
           const extension = getExtension(docMeta.resultsUrl);
-          const entries = await parseDocument(buffer, extension, docMeta);
+          const entries = await parseDocument(buffer, extension, {
+            ...docMeta,
+            onClubAliases: (pairs) => {
+              if (pairs.length) legends.set(docMeta.resultsUrl, [...(legends.get(docMeta.resultsUrl) || []), ...pairs]);
+            },
+          });
           rawEntries.push(...entries);
         } catch (error) {
           state.warnings.push(`No se pudo procesar ${docMeta.resultsUrl}: ${error.message}`);
@@ -488,10 +506,16 @@ async function buildIndex({ onProgress } = {}) {
     }
   }
   log({ phase: 'international' });
+  const historical = await historicalBuild;
+  const satellite = await secondaryArchive;
+  const historicEntries = mergeHistory(historical.entries, satellite.filter((entry) => entry.competition.year < 2021));
   const external = connectAepInternationalPages(await internationalBuild, [...aepInternationalMeets.values()]);
-  const international = alignInternationalNames(mergeInternationalResults(aepInternational, external), domestic);
-  const mergedEntries = [...domestic, ...international];
+  const national = [...domestic, ...historicEntries];
+  const international = alignInternationalNames(mergeInternationalResults(aepInternational, external), national);
+  const mergedEntries = [...national, ...international];
+  applyCountryEvidence(mergedEntries, [...await nationalityRecords, ...satellite.filter((entry) => entry.country)]);
   assignRankingIdentities(mergedEntries);
+  const clubCatalog = clubDirectory(mergedEntries, await affiliations, new Map([...historical.legends, ...legends]));
   const athletes = buildAthleteIndex(mergedEntries);
 
   const index = {
@@ -501,6 +525,9 @@ async function buildIndex({ onProgress } = {}) {
     documentsIndexed: allDocs.size,
     internationalEntryCount: international.length,
     internationalWithAepPageCount: international.filter((entry) => aepInternationalMeets.has(entry.competition.meetPageUrl)).length,
+    historicalEntryCount: mergedEntries.filter((entry) => entry.competition.year < 2021).length,
+    historicalCoverage: historical.coverage,
+    clubCatalog,
     athleteCount: athletes.length,
     entryCount: mergedEntries.length,
     warnings: state.warnings,

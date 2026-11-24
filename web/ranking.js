@@ -44,7 +44,7 @@ const aepRanking = (() => {
     for (const row of rows) {
       if (row.sex !== sex || row.category !== category || row.equipment !== equipment ||
           row.isRankable !== true || row.isIndividualResult === false || row.sourceReview ||
-          /^AI\*?$/i.test(row.placing || '') || (row.country && row.country !== 'ESP')) continue;
+          /^(?:AI\*?|G|FC|invitad[oa])$/i.test(row.placing || '') || row.country !== 'ESP') continue;
       const competition = dayValue(row.competitionDate);
       const expiration = expiresOn(row.competitionDate);
       const daysRemaining = (dayValue(expiration) - now) / DAY;

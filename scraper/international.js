@@ -6,6 +6,7 @@ const cheerio = require('cheerio');
 const XLSX = require('xlsx');
 const pLimit = require('p-limit').default;
 const { normalizeName, normalizeSpaces, parseLocaleNumber, parseSpanishDate } = require('./utils');
+const { countryCode } = require('./countries');
 
 const OPL = 'https://www.openpowerlifting.org';
 const OPL_ARCHIVES = 'https://gitlab.com/api/v4/projects/openpowerlifting%2Fopl-data/repository/archive.zip?path=meet-data%2F';
@@ -104,9 +105,9 @@ function ipfEventLinks(html) {
 }
 
 function publishedCategory(text) {
-  const category = normalizeSpaces(text).replace(/\s+/g, '').match(/^(-?)(\d{2,3})(\+)?kg$/i);
+  const category = normalizeSpaces(text).replace(/\s+/g, '').match(/^([+-]?)(\d{2,3}(?:[.,]5)?)(\+)?kg$/i);
   if (!category) return null;
-  return `${category[3] ? '+' : '-'}${category[2]}kg`;
+  return (category[1] === '+' || category[3] ? '+' : '-') + category[2].replace(',', '.') + 'kg';
 }
 
 function positiveNumber(text) {
@@ -125,11 +126,12 @@ function makeEntry(event, result) {
     athleteName = 'Daniel Tomás Gómez';
   }
   if (!equipment || !sex || !category || !bodyweight || !/\p{L}/u.test(athleteName)) return null;
-  const validLifts = eventType === 'bench' ? Boolean(bestLifts.bench) : MOVEMENTS.every((lift) => bestLifts[lift]);
-  const rankable = Boolean(total && /^\d+$/.test(placing) && validLifts);
+  const validLifts = eventType === 'powerlifting' ? MOVEMENTS.every((lift) => bestLifts[lift]) : Boolean(bestLifts[eventType]);
+  const rankable = Boolean(total && /^(?:\d+|G|NS|SNR)$/.test(placing) && validLifts);
   return {
     athleteName, athleteNameNormalized: normalizeName(athleteName), yearOfBirth, sex, category, placing, bodyweight,
-    country: 'ESP', club: 'España', equipment, sourceFederation: event.federation, bestLifts, attempts,
+    country: event.federation === 'AEP' ? result.country : 'ESP',
+    club: event.federation === 'AEP' ? result.club : 'España', equipment, sourceFederation: event.federation, bestLifts, attempts,
     ...(event.archive && { resultArchive: event.archive }),
     total: rankable ? total : null,
     ipfgl: rankable ? ipfgl : null,
@@ -182,20 +184,23 @@ function openPowerliftingResults(buffer, federation, years) {
     const csv = read(directory + 'entries.csv');
     if (!csv) continue;
     const officialResultsUrls = read(directory + 'URL').split(/\r?\n/).map((line) => line.trim())
-      .filter((line) => /^https:\/\/(?:www\.)?(?:powerlifting\.sport|europowerlifting\.org|goodlift\.info)\//i.test(line));
+      .filter((line) => /^https?:\/\/(?:www\.)?(?:powerlifting\.sport|europowerlifting\.org|goodlift\.info|powerhispania\.net|powerliftingspain\.es)\//i.test(line));
     const event = {
       url: `${OPL}/m/${federation.toLowerCase()}/${id}`, federation, archive: 'OpenPowerlifting', title: meet.MeetName,
       date: meet.Date, year, dateApproximate: true, officialResultsUrls,
       location: [meet.MeetTown, meet.MeetCountry].filter(Boolean).join(', '),
     };
     for (const row of readCsv(csv)) {
-      if (!['Spain', 'ESP'].includes(row.Country) || !['F', 'M'].includes(row.Sex) || !['SBD', 'B'].includes(row.Event)) continue;
-      const equipment = row.Equipment === 'Raw' ? 'raw' : row.Equipment === 'Single-ply' ? 'equipped' : null;
+      const national = federation === 'AEP';
+      const country = countryCode(row.Country) || normalizeSpaces(row.Country) || null;
+      if ((!national && country !== 'ESP') || !['F', 'M'].includes(row.Sex) || !['SBD', 'SDB', 'B', 'D', 'S'].includes(row.Event)) continue;
+      const equipment = row.Equipment === 'Raw' ? 'raw' : ['Single-ply', 'Multi-ply', 'Wraps'].includes(row.Equipment) ? 'equipped' : null;
       const category = publishedCategory(`${row.WeightClassKg}kg`);
       const bodyweight = positiveNumber(row.BodyweightKg);
       if (!equipment || !category || !bodyweight) continue;
-      const eventType = row.Event === 'B' ? 'bench' : 'powerlifting';
-      const columns = eventType === 'bench' ? { bench: 'Bench' } : { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+      const eventType = { B: 'bench', D: 'deadlift', S: 'squat' }[row.Event] || 'powerlifting';
+      const allColumns = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+      const columns = eventType === 'powerlifting' ? allColumns : { [eventType]: allColumns[eventType] };
       const attempts = {};
       const bestLifts = {};
       for (const [movement, column] of Object.entries(columns)) {
@@ -209,12 +214,14 @@ function openPowerliftingResults(buffer, federation, years) {
         const successful = attempts[movement]?.filter((attempt) => attempt.good).map((attempt) => attempt.weight) || [];
         bestLifts[movement] = positiveNumber(row[`Best3${column}Kg`]) || Math.max(0, ...successful) || null;
       }
-      const total = positiveNumber(row.TotalKg) ?? (eventType === 'bench' ? bestLifts.bench : null);
+      const total = positiveNumber(row.TotalKg) ?? (eventType === 'powerlifting' ? null : bestLifts[eventType]);
       const entry = makeEntry(event, {
         athleteName: normalizeSpaces(row.Name),
         yearOfBirth: /^\d{4}$/.test(row.BirthYear) ? Number(row.BirthYear) : /^\d{4}-/.test(row.BirthDate) ? Number(row.BirthDate.slice(0, 4)) : null,
-        sex: row.Sex, category, placing: row.Place, bodyweight, eventType, equipment, bestLifts, attempts, total,
-        ipfgl: goodliftPoints(total, bodyweight, row.Sex, equipment, eventType),
+        sex: row.Sex, category, placing: row.Place, bodyweight, eventType, equipment, bestLifts, attempts, total, country,
+        club: normalizeSpaces(row.Team) || null,
+        ipfgl: year >= 2021 && ['powerlifting', 'bench'].includes(eventType)
+          ? goodliftPoints(total, bodyweight, row.Sex, equipment, eventType) : null,
       });
       if (entry) entries.push(entry);
     }
@@ -390,7 +397,27 @@ async function fetchInternationalResults(fetchBuffer, years, onWarning) {
   return mergeInternationalResults(ipf.flat(), (await archiveBuild).flat());
 }
 
+async function fetchAepArchive(fetchBuffer, years, onWarning) {
+  const url = OPL_ARCHIVES + 'aep';
+  const file = path.join(CACHE_DIR, createHash('sha256').update(url).digest('hex'));
+  await fs.mkdir(CACHE_DIR, { recursive: true });
+  try {
+    const stat = await fs.stat(file);
+    if (Date.now() - stat.mtimeMs < 7 * DAY) return openPowerliftingResults(await fs.readFile(file), 'AEP', years);
+  } catch {}
+  try {
+    const buffer = await fetchBuffer(url);
+    const entries = openPowerliftingResults(buffer, 'AEP', years);
+    await fs.writeFile(file, buffer);
+    return entries;
+  } catch (error) {
+    onWarning('No se pudo actualizar el archivo AEP de OpenPowerlifting: ' + error.message);
+    try { return openPowerliftingResults(await fs.readFile(file), 'AEP', years); }
+    catch { return []; }
+  }
+}
+
 module.exports = {
-  fetchInternationalResults, alignInternationalNames, openPowerliftingResults, ipfResults,
+  fetchInternationalResults, fetchAepArchive, alignInternationalNames, openPowerliftingResults, ipfResults,
   findAepInternationalMeets, aepInternationalLinks, connectAepInternationalPages, classifyAepInternational, mergeInternationalResults, assignRankingIdentities,
 };

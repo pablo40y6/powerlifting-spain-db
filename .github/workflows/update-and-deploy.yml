@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLS_INTERNATIONAL_DIR: ${{ github.workspace }}/.cache/international
+      PLS_HISTORY_DIR: ${{ github.workspace }}/.cache/history
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +49,13 @@ jobs:
           path: .cache/international
           key: international-results-${{ github.run_id }}
           restore-keys: international-results-
+
+      - name: Restore historical results cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/history
+          key: historical-results-${{ github.run_id }}
+          restore-keys: historical-results-
 
       - name: Build data index
         run: npm run build:index

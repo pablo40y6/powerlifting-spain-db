@@ -10,12 +10,13 @@
     <nav class="view-nav" aria-label="Vistas de resultados">
       <a id="searchViewLink" href="#buscador" aria-current="page">Buscador</a>
       <a id="rankingViewLink" href="#ranking">Ranking Top 50</a>
+      <a id="clubsViewLink" href="#clubes">Clubes</a>
     </nav>
     <header class="topbar">
       <div>
         <p class="eyebrow">Powerlifting Spain DB</p>
         <h1>Resultados de powerlifting en España</h1>
-        <p class="lede">Web estática generada desde PowerliftingSpain: busca atletas, filtra por club y compara totales al estilo OpenIPF.</p>
+        <p class="lede">Consulta marcas por atleta, club, competición y año.</p>
       </div>
       <div id="indexMeta" class="index-meta">Cargando data/index.json…</div>
     </header>
@@ -90,7 +91,7 @@
           <label>Modalidad<select id="rankingEquipment"><option value="raw">Clásico (RAW)</option><option value="equipped">Equipado</option></select></label>
           <label>Marca<select id="rankingMetric"><option value="total">Total</option><option value="ipfgl">IPF GL</option><option value="squat">Sentadilla</option><option value="bench">Banca</option><option value="deadlift">Peso muerto</option></select></label>
         </div>
-        <p class="ranking-notice muted">Una marca por atleta y categoría. La vigencia indica cuánto queda de la ventana de 18 meses del ranking.</p>
+        <p class="ranking-notice muted">Solo atletas identificados como españoles en una fuente deportiva. La vigencia indica cuánto queda de la ventana de 18 meses del ranking.</p>
         <details class="ranking-notice">
           <summary>Vigencia y marcas mínimas AEP</summary>
           <p>La marca histórica es el mayor total obtenido en una competición de la AEP. La Guía AEP 2026 distingue una mínima regional permanente y una mínima nacional con 18 meses de validez. Para el Open también cuentan la edición, las pruebas admitidas y las plazas.</p>
@@ -103,6 +104,28 @@
           <table>
             <thead><tr><th scope="col">Puesto</th><th scope="col">Atleta</th><th scope="col">Marca</th><th scope="col">Fecha</th><th scope="col">Competición</th><th scope="col">Vigencia</th></tr></thead>
             <tbody id="rankingBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <main id="clubsView" class="ranking-view" hidden>
+      <section class="results-panel" aria-labelledby="clubsTitle">
+        <div class="panel-head">
+          <div>
+            <h2 id="clubsTitle">Clubes de powerlifting</h2>
+            <p id="clubsSummary" class="muted" aria-live="polite">Cargando clubes…</p>
+          </div>
+        </div>
+        <div class="ranking-controls">
+          <label>Nombre o sigla<input id="clubsSearch" type="search" placeholder="Por ejemplo, BRSTOD"></label>
+          <label>Estado<select id="clubsStatus"><option value="">Todos</option><option value="active">En el listado vigente</option><option value="history">En fuentes históricas</option><option value="pending">Nombre pendiente de contrastar</option></select></label>
+        </div>
+        <p class="ranking-notice muted">Los nombres proceden de los listados y actas de la AEP. Un club histórico puede seguir activo. Las siglas con varias interpretaciones conservan la referencia al acta.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Club</th><th scope="col">Siglas y otros nombres</th><th scope="col">Zona</th><th scope="col">Resultados</th><th scope="col">Fuente</th></tr></thead>
+            <tbody id="clubsBody"></tbody>
           </table>
         </div>
       </section>

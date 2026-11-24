@@ -25,6 +25,8 @@ function getCFBModule() {
   return CFBModule;
 }
 const { PDFParse } = require('pdf-parse');
+const { clubAliasPairs, pdfClubAliases } = require('./clubs');
+const { countryCode } = require('./countries');
 const {
   attemptsFromValues,
   cleanCompetitionTitle,
@@ -978,6 +980,7 @@ function buildExcelLayoutFromHeaderRow(row) {
     placingIndex: isGoodlift ? goodliftPlacingIndex : Math.max(0, lifterIndex - 1),
     yearIndex,
     clubIndex,
+    countryIndex: findHeaderIndex(row, (text) => /^(?:pais|nacionalidad|nacion|nation|country)$/.test(text)),
     bodyweightIndex,
     coefficientIndex,
     orderIndex,
@@ -1105,6 +1108,7 @@ function parseExcelDocument(buffer, baseMeta) {
     const rows = sheetRows.map((item) => item.values);
 
     if (!rows.length) continue;
+    if (baseMeta.onClubAliases) baseMeta.onClubAliases(clubAliasPairs(rows.flat()));
 
     const name = firstNonEmpty(rows[1] || []);
     const subtitle = firstNonEmpty(rows[2] || []);
@@ -1217,6 +1221,11 @@ function parseExcelDocument(buffer, baseMeta) {
         liftType,
         movementRanks,
       });
+      const country = countryCode(row[currentLayout.countryIndex]);
+      if (country) {
+        entry.country = country;
+        entry.countrySource = competition.resultsUrl;
+      }
 
       if (!shouldRejectNonAthleteResult(entry)) entries.push(entry);
     }
@@ -2775,7 +2784,9 @@ async function parsePdfDocument(buffer, baseMeta) {
   const parser = new PDFParse({ data: buffer });
   try {
     const parsed = await parser.getText();
-    const entries = parsePdfText(String(parsed.text || ''), baseMeta);
+    const text = String(parsed.text || '');
+    if (baseMeta.onClubAliases) baseMeta.onClubAliases(pdfClubAliases(text));
+    const entries = parsePdfText(text, baseMeta);
     return applyVerifiedPdfAttempts(entries, baseMeta.resultsUrl);
   } finally {
     await parser.destroy();
@@ -2937,6 +2948,8 @@ function mergePreferredEntry(preferred, fallback) {
     placing,
     yearOfBirth: pickValue(preferred.yearOfBirth, fallback.yearOfBirth),
     club: pickValue(preferred.club, fallback.club),
+    country: pickValue(preferred.country, fallback.country),
+    countrySource: pickValue(preferred.countrySource, fallback.countrySource),
     bodyweight: pickValue(preferred.bodyweight, fallback.bodyweight),
     coefficient: pickValue(preferred.coefficient, fallback.coefficient),
     order: pickValue(preferred.order, fallback.order),
