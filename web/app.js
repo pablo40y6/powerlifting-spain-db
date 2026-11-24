@@ -70,6 +70,7 @@ function flattenIndex(index) {
       ...entry,
       athleteName: entry.athleteName || athlete.athleteName,
       athleteNameNormalized: entry.athleteNameNormalized || athlete.athleteNameNormalized,
+      athleteId: athlete.athleteId || athlete.athleteNameNormalized,
     }))
   );
 }
@@ -150,7 +151,7 @@ function renderTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${formatDate(row.competitionDate, row.competitionYear)}</td>
-      <td><button class="link-button" data-athlete="${row.athleteNameNormalized}">${row.athleteName || '—'}</button></td>
+      <td><button class="link-button" data-athlete="${row.athleteId}">${row.athleteName || '—'}</button></td>
       <td>${row.club || '—'}</td>
       <td>${row.sex || '—'}</td>
       <td>${row.category || '—'}</td>
@@ -189,8 +190,8 @@ function renderAttempts(entry) {
   `).join('');
 }
 
-function showAthlete(normalizedName) {
-  const rows = state.rows.filter((row) => row.athleteNameNormalized === normalizedName)
+function showAthlete(athleteId) {
+  const rows = state.rows.filter((row) => row.athleteId === athleteId)
     .sort((a, b) => String(b.competitionDate || '').localeCompare(String(a.competitionDate || '')));
   if (!rows.length) return;
   const bestTotal = bestBy(rows, 'total');

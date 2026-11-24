@@ -165,6 +165,7 @@ function flattenEntries(index) {
       rows.push({
         athleteName: entry.athleteName || athlete.athleteName,
         athleteNameNormalized: entry.athleteNameNormalized || athlete.athleteNameNormalized,
+        ...(athlete.athleteId ? { athleteId: athlete.athleteId } : {}),
         ...entry,
         rowKey: entry.rowKey || `${athlete.athleteNameNormalized || normalizedKey(athlete.athleteName)}:${rows.length}`,
       });
@@ -180,11 +181,46 @@ function makeFinding(entry, severity, type, message, extras = {}) {
     athleteName: entry?.athleteName || null,
     competitionName: entry?.competitionName || null,
     competitionYear: entry?.competitionYear ?? null,
+    resultsUrl: entry?.resultsUrl || null,
     message,
     value: extras.value ?? null,
     expected: extras.expected ?? null,
     rowKey: entry?.rowKey || null,
   };
+}
+
+function auditColumnStructure(entry) {
+  const findings = [];
+  const year = toNumber(entry.competitionYear);
+  const birthYear = toNumber(entry.yearOfBirth);
+  const weight = toNumber(entry.bodyweight);
+  if (!/\p{L}/u.test(entry.athleteName || '')) {
+    findings.push(makeFinding(entry, 'error', 'athlete_name_without_letters', 'La columna atleta no contiene un nombre.', { value: entry.athleteName }));
+  } else if (/\b(?:19|20)\d{2}(?:-\d{2}-\d{2})?\b|^\d+\s/.test(entry.athleteName)) {
+    findings.push(makeFinding(entry, 'warning', 'athlete_name_column_shift', 'El nombre contiene un año o un número de puesto.', { value: entry.athleteName }));
+  }
+  if (/\b\d+[.,]\d+\b|^\[\d+\]/.test(entry.club || '')) {
+    findings.push(makeFinding(entry, 'warning', 'club_column_shift', 'El club contiene un peso, unos puntos o datos desplazados.', { value: entry.club }));
+  }
+  if (birthYear !== null && (birthYear < 1900 || (year && (year - birthYear < 10 || year - birthYear > 100)))) {
+    findings.push(makeFinding(entry, 'warning', 'birth_year_out_of_range', 'El año de nacimiento no es verosímil para la competición.', { value: birthYear }));
+  }
+  if (weight !== null && (weight < 30 || weight > 250)) {
+    findings.push(makeFinding(entry, 'warning', 'bodyweight_out_of_range', 'Peso corporal fuera del rango esperado.', { value: weight }));
+  }
+  if (entry.sex !== null && entry.sex !== undefined && entry.sex !== 'M' && entry.sex !== 'F') {
+    findings.push(makeFinding(entry, 'error', 'sex_column_invalid', 'Valor inesperado en la columna de sexo.', { value: entry.sex }));
+  }
+  for (const field of ['total', 'ipfgl']) {
+    if (entry[field] === null || entry[field] === undefined) continue;
+    if (!Number.isFinite(entry[field]) || entry[field] < 0) {
+      findings.push(makeFinding(entry, 'error', 'score_column_invalid', `La columna ${field} contiene un valor no válido.`, { value: entry[field] }));
+    }
+  }
+  if (entry.isRankable && /^(?:DQ|DSQ|DR|RD|TD|DD|DNF|DNS)$/i.test(entry.placing || '')) {
+    findings.push(makeFinding(entry, 'error', 'rankable_disqualified_result', 'Un resultado descalificado o retirado figura en la clasificación.', { value: entry.placing }));
+  }
+  return findings;
 }
 
 function auditCategory(entry) {
@@ -233,13 +269,13 @@ function auditIpfgl(entry) {
   if (eventType === 'powerlifting' && entry.isIndividualResult !== false && ipfgl > 140) {
     findings.push(makeFinding(entry, 'warning', 'ipfgl_very_high', 'IPF GL muy alto en powerlifting individual; revisar si es real.', { value: ipfgl }));
   }
-  if (entry.sex === 'F' && ipfgl > 120) {
+  if (eventType === 'powerlifting' && entry.sex === 'F' && ipfgl > 120) {
     findings.push(makeFinding(entry, 'warning', 'ipfgl_female_high', 'IPF GL femenino por encima de 120; warning fuerte.', { value: ipfgl }));
   }
   if (ipfgl === 0 && total > 0) {
     findings.push(makeFinding(entry, 'warning', 'ipfgl_zero_with_total', 'IPF GL igual a 0 con total positivo.', { value: { ipfgl, total } }));
   }
-  if (ipfgl > 80 && total > 0 && total < 200) {
+  if (eventType === 'powerlifting' && ipfgl > 80 && total > 0 && total < 200) {
     findings.push(makeFinding(entry, 'warning', 'ipfgl_high_low_total', 'IPF GL alto con total muy bajo.', { value: { ipfgl, total } }));
   }
   if (ipfgl > 0 && entry.isRankable === false) {
@@ -316,8 +352,10 @@ function approximateDuplicateKey(entry) {
   const total = toNumber(entry.total);
   return [
     normalizedKey(entry.athleteNameNormalized || entry.athleteName),
-    normalizedKey(entry.competitionName),
+    entry.meetPageUrl || normalizedKey(entry.competitionName),
     entry.competitionYear || '',
+    entry.sex || '',
+    entry.yearOfBirth || '',
     entry.eventType || entry.liftType || 'powerlifting',
     total === null ? '' : total.toFixed(2),
     roundedBw,
@@ -354,6 +392,7 @@ function auditAttempts(entry) {
       const weight = toNumber(attempt?.weight);
       if (weight === null) continue;
       if (weight <= 0) findings.push(makeFinding(entry, 'warning', 'attempt_non_positive', `Intento ${movement} con peso <= 0.`, { value: attempt }));
+      if (weight > 0 && weight < 20) findings.push(makeFinding(entry, 'warning', 'attempt_suspiciously_low', `Intento ${movement} con un peso inusualmente bajo.`, { value: attempt }));
       if (weight > 500) findings.push(makeFinding(entry, 'warning', 'attempt_extremely_high', `Intento ${movement} extremadamente alto.`, { value: attempt }));
       if (weight > 50 && weight < 170 && !Number.isInteger(weight * 2) && (Math.abs(weight - toNumber(entry.ipfgl)) < 0.01 || Math.abs(weight - toNumber(entry.bodyweight)) < 0.01)) {
         findings.push(makeFinding(entry, 'warning', 'attempt_suspicious_decimal', `Intento ${movement} parece IPF GL o peso corporal.`, { value: attempt }));
@@ -383,7 +422,9 @@ function auditLinks(entry) {
       findings.push(makeFinding(entry, 'warning', `${field}_non_http`, `${field} no usa http/https.`, { value }));
     }
   }
-  if (entry.resultsUrl && /(club|juez|jueces|cuadrante|horario|inscrip|cartel|guia|normativa)/i.test(entry.resultsUrl)) {
+  const filename = normalizeName(String(entry.resultsUrl || '').split('/').at(-1));
+  if (/\b(?:juez|jueces|cuadrante|horario|inscrip\w*|cartel|guia|normativa)\b/.test(filename) ||
+      /^(?:(?:clasificacion|ranking|puntuaciones) (?:por |de )?club(?:es|s)?|clubes activos)\b/.test(filename)) {
     findings.push(makeFinding(entry, 'warning', 'results_url_suspicious_document', 'resultsUrl parece apuntar a documento que no es de resultados.', { value: entry.resultsUrl }));
   }
   return findings;
@@ -624,11 +665,35 @@ function buildRegressionSection(entries) {
   };
 }
 
+function summarizeColumns(entries) {
+  const columns = {};
+  function record(field, value) {
+    const column = columns[field] ||= { populated: 0, types: {} };
+    if (value === null || value === undefined || value === '') return;
+    column.populated += 1;
+    const type = Array.isArray(value) ? 'array' : typeof value;
+    column.types[type] = (column.types[type] || 0) + 1;
+    if (type === 'number' && Number.isFinite(value)) {
+      column.min = Math.min(column.min ?? value, value);
+      column.max = Math.max(column.max ?? value, value);
+    }
+  }
+  for (const row of entries) {
+    for (const [field, value] of Object.entries(row)) record(field, value);
+    for (const [movement, attempts] of Object.entries(getAttemptGroups(row))) {
+      for (let index = 0; index < 3; index += 1) record(`attempts.${movement}.${index+1}`, attempts[index]?.weight);
+    }
+  }
+  for (const column of Object.values(columns)) column.empty = entries.length - column.populated;
+  return columns;
+}
+
 function auditIndex(index, options = {}) {
   const entries = flattenEntries(index);
   const findings = [];
   for (const entry of entries) {
     findings.push(
+      ...auditColumnStructure(entry),
       ...auditCategory(entry),
       ...auditPowerliftingRankability(entry),
       ...auditIpfgl(entry),
@@ -641,12 +706,19 @@ function auditIndex(index, options = {}) {
   }
   findings.push(...auditDuplicates(entries));
 
-  const athletes = new Set(entries.map((entry) => normalizedKey(entry.athleteNameNormalized || entry.athleteName)).filter(Boolean));
+  const athletes = new Set(entries.map((entry) => entry.athleteId || normalizedKey(entry.athleteNameNormalized || entry.athleteName)).filter(Boolean));
   const byType = {};
+  const bySource = new Map();
   for (const finding of findings) {
     byType[finding.type] ||= { info: 0, warning: 0, error: 0, total: 0 };
     byType[finding.type][finding.severity] += 1;
     byType[finding.type].total += 1;
+    if (finding.resultsUrl) {
+      const source = bySource.get(finding.resultsUrl) || { url: finding.resultsUrl, findings: 0, byType: {} };
+      source.findings += 1;
+      source.byType[finding.type] = (source.byType[finding.type] || 0) + 1;
+      bySource.set(finding.resultsUrl, source);
+    }
   }
   return {
     generatedAt: new Date().toISOString(),
@@ -664,6 +736,8 @@ function auditIndex(index, options = {}) {
         exampleLimit: options.totalAttemptSumMismatchExampleLimit,
       }),
     },
+    columns: summarizeColumns(entries),
+    bySource: [...bySource.values()].sort((a, b) => b.findings - a.findings),
     regression: buildRegressionSection(entries),
     findings,
   };
@@ -695,6 +769,16 @@ function renderMarkdown(report) {
   lines.push('| --- | ---: | ---: | ---: | ---: |');
   for (const [type, counts] of Object.entries(report.summary.byType).sort((a, b) => b[1].total - a[1].total)) {
     lines.push(`| ${type} | ${counts.info} | ${counts.warning} | ${counts.error} | ${counts.total} |`);
+  }
+  lines.push('', '## Cobertura por columna', '', '| Columna | Con datos | Vacía | Tipos | Mín. | Máx. |', '| --- | ---: | ---: | --- | ---: | ---: |');
+  for (const [field, column] of Object.entries(report.columns)) {
+    const types = Object.entries(column.types).map(([type, count]) => `${type} (${count})`).join(', ');
+    lines.push(`| ${field} | ${column.populated} | ${column.empty} | ${types} | ${column.min ?? ''} | ${column.max ?? ''} |`);
+  }
+  lines.push('', '## Documentos con más hallazgos', '');
+  for (const source of report.bySource.slice(0, 15)) {
+    const types = Object.entries(source.byType).sort((a, b) => b[1] - a[1]).map(([type, count]) => `${type} (${count})`).join(', ');
+    lines.push(`- ${source.findings} hallazgos. ${types}. [Acta](${source.url})`);
   }
   lines.push('', '## Atletas de regresión', '');
   for (const athlete of report.regression.athletes) lines.push(`- ${athlete.athleteName}: ${athlete.count}`);

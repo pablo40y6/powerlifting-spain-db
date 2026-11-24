@@ -121,23 +121,38 @@ function formatDateISO(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function validatedDate(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+}
+
 function parseSpanishDate(text) {
   const raw = String(text || '');
   const isoMatch = raw.match(/\b(20\d{2}|19\d{2})-(\d{2})-(\d{2})\b/);
-  if (isoMatch) {
-    const date = new Date(Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3])));
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
+  if (isoMatch) return validatedDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+
+  const numericMatch = raw.match(/\b(\d{1,2})(?:\s*[-–]\s*\d{1,2})?([./])(\d{1,2})\2((?:19|20)\d{2})\b/);
+  if (numericMatch) return validatedDate(Number(numericMatch[4]), Number(numericMatch[3]), Number(numericMatch[1]));
 
   const value = stripAccents(raw.toLowerCase());
-  const match = value.match(/(\d{1,2})(?:\s+de)?\s+([a-z]+)(?:\s+de)?\s+(\d{4})/);
-  if (!match) return null;
-  const day = Number(match[1]);
-  const month = MONTHS[match[2]];
-  const year = Number(match[3]);
-  if (!month) return null;
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return Number.isNaN(date.getTime()) ? null : date;
+  const parts = [...value.matchAll(/\b(\d{1,2})(?:\s+de)?\s+([a-z]{3,10})\b\.?/g)];
+  const dates = parts.map((part) => {
+    const month = MONTHS[part[2]] || (part[2] === 'sept' ? 9 : Object.entries(MONTHS).find(([name]) => part[2].length === 3 && name.startsWith(part[2]))?.[1]);
+    return { part, month };
+  }).filter(({ month }) => month);
+  for (const [index, { part, month }] of dates.entries()) {
+    const end = part.index + part[0].length;
+    const next = dates[index + 1]?.part;
+    const untilNext = value.slice(end, next?.index);
+    const yearMatch = untilNext.match(/^\s*,?\s*(?:del?\s+)?((?:19|20)\d{2})\b/);
+    const inheritedYear = next && /^\s*(?:[-–]|y|al)\s*$/.test(untilNext)
+      ? value.slice(next.index + next[0].length).match(/^\s*,?\s*(?:del?\s+)?((?:19|20)\d{2})\b/) : null;
+    const year = (yearMatch || inheritedYear)?.[1];
+    if (!year) continue;
+    const rangeStart = value.slice(0, part.index).match(/\b(\d{1,2})\s*(?:[-–]|y|al)\s*$/);
+    return validatedDate(Number(year), month, Number(rangeStart?.[1] || part[1]));
+  }
+  return null;
 }
 
 

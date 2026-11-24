@@ -14,7 +14,7 @@ const {
   normalizeName,
   normalizeSpaces,
   firstExtractedYear,
-  firstParsedSpanishDate,
+  parseSpanishDate,
   toAbsoluteUrl,
 } = require('./utils');
 
@@ -66,22 +66,24 @@ function createHttpClient() {
   });
 }
 
-function extractPageMeta(html, pageUrl) {
+function textWithLineBreaks($, node) {
+  const content = $(node).clone();
+  content.find('br').replaceWith(' ');
+  return normalizeSpaces(content.text());
+}
+
+function extractPageMeta(html, pageUrl, anchorText = '') {
   const $ = cheerio.load(html);
   const title = cleanCompetitionTitle($('h1').first().text() || $('title').first().text() || '');
-  const text = normalizeSpaces([
-    $('time[datetime]').first().attr('datetime'),
-    $('.entry-date').first().text(),
-    $('.posted-on').first().text(),
-    $('.entry-content').first().text(),
-    title,
-    pageUrl,
-  ].filter(Boolean).join(' '));
-  const parsedDate = firstParsedSpanishDate([text]);
+  const headings = $('h2,h3,.elementor-heading-title').slice(0, 12).map((_, node) => textWithLineBreaks($, node)).get();
+  const year = firstExtractedYear([title, pageUrl, anchorText]);
+  const parsedDate = [...headings, anchorText, title]
+    .map((text) => parseSpanishDate(text))
+    .find((date) => date && (!year || date.getUTCFullYear() === year));
   return {
     pageTitle: title || null,
     date: parsedDate ? parsedDate.toISOString().slice(0, 10) : null,
-    year: parsedDate ? parsedDate.getUTCFullYear() : firstExtractedYear([title, pageUrl, text]),
+    year: parsedDate ? parsedDate.getUTCFullYear() : year,
   };
 }
 
@@ -92,7 +94,7 @@ function discoverCompetitionPages(html, pageUrl) {
 
   $('a[href]').each((_, el) => {
     const href = toAbsoluteUrl($(el).attr('href'), pageUrl);
-    const text = normalizeSpaces($(el).text());
+    const text = textWithLineBreaks($, el);
     if (!href) return;
 
     const ext = getExtension(href);
@@ -163,6 +165,45 @@ function extractDocumentsFromCompetitionPage(html, pageUrl) {
   return Array.from(docs.values());
 }
 
+function documentPageMatch(doc, page) {
+  const filename = new URL(doc.url).pathname.split('/').at(-1);
+  const documentWords = new Set(normalizeName(filename).split(' '));
+  const pageWords = new Set(normalizeName(page.pageTitle).split(' ').filter((word) => word.length > 3));
+  return [...pageWords].filter((word) => documentWords.has(word)).length;
+}
+
+function indexDocuments(pageMetas, directDocs) {
+  const documents = new Map();
+  for (const page of [...pageMetas].sort((a, b) => a.url.localeCompare(b.url, 'en'))) {
+    for (const doc of page.docs) {
+      const match = documentPageMatch(doc, page);
+      const existing = documents.get(doc.url);
+      if (!existing || match > existing.match) {
+        documents.set(doc.url, {
+          resultsUrl: doc.url,
+          resultsLabel: doc.label,
+          meetPageUrl: page.url,
+          pageTitle: page.pageTitle,
+          date: page.date,
+          year: page.year,
+          match,
+        });
+      }
+    }
+  }
+  for (const doc of directDocs.values()) {
+    if (!documents.has(doc.url)) {
+      documents.set(doc.url, {
+        resultsUrl: doc.url,
+        resultsLabel: doc.label,
+        meetPageUrl: doc.discoveredOn,
+        pageTitle: null,
+      });
+    }
+  }
+  return documents;
+}
+
 function preferDocuments(documents) {
   const excelDocs = documents.filter((doc) => ['.xls', '.xlsx'].includes(getExtension(doc.url)));
   if (excelDocs.length) return excelDocs;
@@ -220,6 +261,37 @@ function entryToAthleteCard(entry) {
   };
 }
 
+function separateHomonyms(group) {
+  const confirmed = group.entries.filter((entry) => entry.isRankable && entry.yearOfBirth && entry.club && entry.meetPageUrl);
+  const byMeet = new Map();
+  for (const entry of confirmed) {
+    if (!byMeet.has(entry.meetPageUrl)) byMeet.set(entry.meetPageUrl, []);
+    byMeet.get(entry.meetPageUrl).push(entry);
+  }
+  const hasHomonyms = Array.from(byMeet.values()).some((meet) => meet.some((entry, index) =>
+    meet.slice(index + 1).some((other) => entry.yearOfBirth !== other.yearOfBirth && normalizeName(entry.club) !== normalizeName(other.club))
+  ));
+  if (!hasHomonyms) return [group];
+
+  const clubYears = new Map();
+  for (const entry of confirmed) {
+    const club = normalizeName(entry.club);
+    if (!clubYears.has(club)) clubYears.set(club, new Set());
+    clubYears.get(club).add(entry.yearOfBirth);
+  }
+  const distinct = new Map();
+  for (const entry of group.entries) {
+    const years = clubYears.get(normalizeName(entry.club));
+    const year = entry.yearOfBirth || (years?.size === 1 ? years.values().next().value : null);
+    const id = `${group.athleteNameNormalized}-${year || 'sin-anio'}`;
+    if (!distinct.has(id)) distinct.set(id, { ...group, athleteId: id, clubs: new Set(), entries: [] });
+    const athlete = distinct.get(id);
+    if (entry.club) athlete.clubs.add(entry.club);
+    athlete.entries.push(entry);
+  }
+  return Array.from(distinct.values());
+}
+
 function buildAthleteIndex(entries) {
   const grouped = new Map();
 
@@ -238,7 +310,7 @@ function buildAthleteIndex(entries) {
     group.entries.push(entryToAthleteCard(entry));
   }
 
-  const athletes = Array.from(grouped.values()).map((group) => {
+  const athletes = Array.from(grouped.values()).flatMap(separateHomonyms).map((group) => {
     group.entries.sort((a, b) => {
       const da = a.competitionDate || '0000-00-00';
       const db = b.competitionDate || '0000-00-00';
@@ -247,6 +319,7 @@ function buildAthleteIndex(entries) {
     return {
       athleteName: group.athleteName,
       athleteNameNormalized: group.athleteNameNormalized,
+      ...(group.athleteId ? { athleteId: group.athleteId } : {}),
       clubs: Array.from(group.clubs).filter(Boolean).sort(),
       entries: group.entries,
     };
@@ -308,7 +381,7 @@ async function buildIndex({ onProgress } = {}) {
           // merge puede usar Excel para los campos tabulares y PDF para
           // recuperar nulos que en Excel antiguo solo aparecen en rojo/tachado.
           const docs = extractDocumentsFromCompetitionPage(html, page.url);
-          const pageMeta = extractPageMeta(html, page.url);
+          const pageMeta = extractPageMeta(html, page.url, page.anchorText);
           pageMetas.push({
             url: page.url,
             pageTitle: pageMeta.pageTitle || cleanCompetitionTitle(page.anchorText || ''),
@@ -325,30 +398,7 @@ async function buildIndex({ onProgress } = {}) {
     )
   );
 
-  const allDocs = new Map();
-  for (const page of pageMetas) {
-    for (const doc of page.docs) {
-      allDocs.set(doc.url, {
-        resultsUrl: doc.url,
-        resultsLabel: doc.label,
-        meetPageUrl: page.url,
-        pageTitle: page.pageTitle,
-        date: page.date,
-        year: page.year,
-      });
-    }
-  }
-
-  for (const doc of directDocs.values()) {
-    if (!allDocs.has(doc.url)) {
-      allDocs.set(doc.url, {
-        resultsUrl: doc.url,
-        resultsLabel: doc.label,
-        meetPageUrl: doc.discoveredOn,
-        pageTitle: null,
-      });
-    }
-  }
+  const allDocs = indexDocuments(pageMetas, directDocs);
 
   state.phase = 'documents';
   state.documents = allDocs.size;
@@ -445,6 +495,8 @@ module.exports = {
     discoverCompetitionPages,
     extractDocumentsFromCompetitionPage,
     extractPageMeta,
+    buildAthleteIndex,
+    indexDocuments,
     scoreAthlete,
   },
 };

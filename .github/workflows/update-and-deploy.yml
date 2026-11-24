@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/update-and-deploy.yml'
+      - 'scraper/**'
+      - 'scripts/audit-index.js'
+      - 'web/**'
   schedule:
     - cron: '17 4 * * MON'
 

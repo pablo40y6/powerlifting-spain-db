@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const XLSX = require('xlsx-js-style');
-const { parseDocument, _private } = require('../scraper/parser');
+const { parseDocument, mergeAthleteEntries, _private } = require('../scraper/parser');
 const { searchAthletes, _private: crawlerPrivate } = require('../scraper/crawler');
 const { isLikelyResultsDocument, looksLikeCompetitionUrl, normalizeName, parseAttempt } = require('../scraper/utils');
 
@@ -82,6 +82,92 @@ test('PDF de 2022 interpreta 43 como puesto antes del nombre del atleta', () => 
     competition(), 'M', null
   );
   assert.deepEqual([entry.placing, entry.category, entry.bodyweight, entry.total], ['43', '-83kg', 75.76, 440]);
+});
+
+test('PDF conserva por separado nombre, nacimiento, coeficiente y puntuación por clubes', () => {
+  const metadata = competition();
+  const entry = _private.parsePdfAthleteLine(
+    '20 Atleta de Prueba \t\'1988-01-01\tFIA 87,75 0,1346 70 170,0 177,5 182,5 19 95,0 100,0 100,0 25 220,0 232,5 240,0 9 512,5 68,98 1',
+    metadata, 'M', '-53kg'
+  );
+  assert.deepEqual([entry.athleteName, entry.yearOfBirth, entry.club], ['Atleta de Prueba', 1988, 'FIA']);
+  assert.deepEqual([entry.bodyweight, entry.category, entry.total, entry.ipfgl], [87.75, '-93kg', 512.5, 68.98]);
+});
+
+test('Excel mixto mantiene la banca, el powerlifting y las fichas de dos homónimos', async () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['Asociacion Espanola de Powerlifting'], ['Reino de León'], ['Regional'], ['León, 20 octubre 2024'],
+    ['HOMBRES POWERLIFTING RAW'],
+    ['Pos', 'Levantador', 'Año', 'Club', 'Peso', 'Coef.', 'Ord.', 'Sentadillas', '', '', '', 'Press Banca', '', '', '', 'Peso Muerto', '', '', '', 'Total', 'IPF GL'],
+    ['-83kg (solo PRESS BANCA)'],
+    [1, 'Atleta de Prueba', 1997, 'CLUB BANCA', 81.94, 0.5, 10, '', '', '', '', 132.5, 140, -142.5, '', '', '', '', '', 140, 70.79],
+    ['', '-83kg'],
+    [1, 'Atleta de Prueba', 2001, 'CLUB FUERZA', 81.34, 0.14, 24, 235, 245, 252.5, 2, 150, 157.5, -165, 1, -220, 230, -240, 6, 640, 89.54],
+    ['', 'MEJORES LEVANTADORES IPF GL'],
+    [1, 'Atleta de Resumen', 1990, 'CLUB FUERZA', 81.34, 0.14, 24, 235, 245, 252.5, 2, 150, 157.5, -165, 1, -220, 230, -240, 6, 640, 89.54],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Hombres');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  const rows = mergeAthleteEntries(await parseDocument(buffer, '.xlsx', { meetPageUrl: 'https://powerliftingspain.es/reino-de-leon-2024/' }));
+  assert.deepEqual(rows.map((row) => [row.liftType, row.category, row.total, row.isRankable]), [
+    ['bench', '-83kg', 140, true], ['powerlifting', '-83kg', 640, true],
+  ]);
+  const athletes = crawlerPrivate.buildAthleteIndex(rows);
+  assert.deepEqual(athletes.map((athlete) => [athlete.athleteId, athlete.entries.length]), [['atleta de prueba-1997', 1], ['atleta de prueba-2001', 1]]);
+});
+
+test('Excel de banca conserva encabezados centrados y un intento válido con fondo naranja', async () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['Asociacion Espanola de Powerlifting'], ['Campeonato de Banca'], ['Nacional'], ['Chiva, 1 junio 2024'],
+    ['MUJERES PRESS BANCA RAW'],
+    ['Pos', 'Levantadora', 'Año', 'Club', 'Peso', 'Coef.', 'Ord.', '', 'PRESS BANCA', '', 'M.P.B.', 'IPF GL'],
+    ['', '-63kg'],
+    [1, 'Atleta de Prueba', 2000, 'CLUB', 62.96, 0.8347, 2, 77.5, 80, -85, 80, 66.78],
+  ]);
+  sheet.I8.s = { fill: { patternType: 'solid', fgColor: { rgb: 'FF6600' } } };
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Banca');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  const [result] = await parseDocument(buffer, '.xlsx', {});
+  assert.deepEqual([result.total, result.ipfgl, result.eventType, result.category, result.isRankable], [80, 66.78, 'bench', '-63kg', true]);
+  assert.deepEqual(result.attempts.bench.map((attempt) => [attempt.weight, attempt.good]), [[77.5, true], [80, true], [85, false]]);
+});
+
+test('fusiona la misma marca sin fecha y descarta una copia en una categoría incompatible', () => {
+  const good = _private.parsePdfAthleteLine(
+    '20 Atleta de Prueba 1988 FIA 87,75 0,1346 70 170,0 177,5 182,5 19 95,0 100,0 100,0 25 220,0 232,5 240,0 9 512,5 68,98 1',
+    { ...competition(), date: '2026-05-03', sourcePriority: 2 }, 'M', null
+  );
+  const missingDate = { ...good, competition: { ...good.competition, date: null } };
+  const wrongSection = {
+    ...good, sex: 'F', category: '-43kg', competition: { ...good.competition, sourcePriority: 3 },
+  };
+  const homonym = { ...good, yearOfBirth: 1992, club: 'OTRO' };
+  const rows = mergeAthleteEntries([wrongSection, missingDate, homonym, good]);
+  assert.deepEqual(rows.sort((a, b) => a.yearOfBirth - b.yearOfBirth).map((row) => [row.sex, row.yearOfBirth, row.category, row.competition.date]), [
+    ['M', 1988, '-93kg', '2026-05-03'], ['M', 1992, '-93kg', '2026-05-03'],
+  ]);
+});
+
+test('la fecha oficial de la página prevalece sobre la revisión y el texto del Excel', () => {
+  const meta = crawlerPrivate.extractPageMeta(
+    '<h1>Campeonato Junior 2023</h1><time datetime="2024-01-10"></time><h2>Ibi<br>29 sept. - 1 oct., 2023</h2>',
+    'https://powerliftingspain.es/junior-2023/'
+  );
+  assert.equal(meta.date, '2023-09-29');
+  assert.equal(_private.buildCompetitionMeta(meta, { locationDateText: '20 septiembre 2023' }).date, '2023-09-29');
+});
+
+test('un acta compartida usa la página que mejor coincide con su título', () => {
+  const doc = { url: 'https://powerliftingspain.es/Copa-de-Espana-Masters-Equipado-y-Press-Banca.pdf', label: 'Resultados' };
+  const masters = { url: 'https://powerliftingspain.es/copa-masters/', pageTitle: 'Copa de España Masters Equipado', docs: [doc] };
+  const other = { url: 'https://powerliftingspain.es/copa-open/', pageTitle: 'Copa de España Open', docs: [doc] };
+  for (const pages of [[masters, other], [other, masters]]) {
+    const result = crawlerPrivate.indexDocuments(pages, new Map());
+    assert.equal(result.size, 1);
+    assert.equal(result.get(doc.url).meetPageUrl, masters.url);
+  }
 });
 
 

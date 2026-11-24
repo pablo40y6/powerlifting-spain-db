@@ -39,6 +39,24 @@ function findingTypes(report) {
   return report.findings.map((finding) => finding.type);
 }
 
+test('la auditoría cuenta columnas vacías y agrupa valores inválidos por acta', () => {
+  const report = auditIndex({ entries: [entry({ athleteName: '23', yearOfBirth: 23, ipfgl: -240 }), entry({ competitionDate: null })] });
+  assert.equal(report.columns.competitionDate.empty, 1);
+  assert.deepEqual(report.columns.ipfgl.types, { number: 2 });
+  assert.equal(report.bySource[0].byType.athlete_name_without_letters, 1);
+  assert.equal(report.bySource[0].byType.score_column_invalid, 1);
+});
+
+test('la auditoría acepta puntuaciones de banca y actas individuales de un campeonato de clubes', () => {
+  const url = 'https://powerliftingspain.es/wp-content/uploads/2025/11/Resultados-I-Campeonato-de-Clubes-por-Equipos.pdf';
+  const report = auditIndex({ entries: [entry({
+    sex: 'F', category: '-84kg', bodyweight: 78, total: 120, ipfgl: 94, eventType: 'bench', resultsUrl: url,
+    attempts: { bench: [{ weight: 120, good: true }] },
+  })] });
+  assert.ok(!findingTypes(report).includes('ipfgl_high_low_total'));
+  assert.ok(!findingTypes(report).includes('results_url_suspicious_document'));
+});
+
 test('categoría M 91.70 -105kg no alerta si el peso cabe en una clase válida adyacente', () => {
   assert.equal(expectedCategoryForBodyweight('M', 91.7), '-93kg');
   const report = auditIndex({ entries: [entry({ category: '-105kg' })] });
