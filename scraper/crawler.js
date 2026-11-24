@@ -6,6 +6,10 @@ const cheerio = require('cheerio');
 const pLimit = require('p-limit').default;
 const sanitizeFilename = require('sanitize-filename');
 const { reviewResult } = require('./reviewed-results');
+const {
+  fetchInternationalResults, alignInternationalNames, findAepInternationalMeets, aepInternationalLinks,
+  connectAepInternationalPages, classifyAepInternational, mergeInternationalResults, assignRankingIdentities,
+} = require('./international');
 const { parseDocument, mergeAthleteEntries, _private: parserPrivate } = require('./parser');
 const {
   cleanCompetitionTitle,
@@ -23,7 +27,10 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const CACHE_DIR = process.env.PLS_DOCS_DIR || path.join(os.tmpdir(), 'powerlifting-spain-db', 'docs');
 const INDEX_FILE = path.join(DATA_DIR, 'index.json');
 
-const SEED_YEAR_PAGES = [2026, 2025, 2024, 2023, 2022, 2021].map(
+const COMPETITION_YEARS = Array.from(
+  { length: new Date().getUTCFullYear() - 2020 }, (_, index) => new Date().getUTCFullYear() - index
+);
+const SEED_YEAR_PAGES = COMPETITION_YEARS.map(
   (year) => `https://powerliftingspain.es/campeonatos-${year >= 2023 ? 'ano-' : ''}${year}/`
 );
 
@@ -42,6 +49,7 @@ function canonicalResultsDocumentUrl(url) {
 
 function calculateProgressPercent(state) {
   if (state.phase === 'done') return 100;
+  if (state.phase === 'international') return 95;
 
   if (state.phase === 'seed-pages') {
     const total = Math.max(state.seedPages || 1, 1);
@@ -55,7 +63,7 @@ function calculateProgressPercent(state) {
 
   if (state.phase === 'documents') {
     const total = Math.max(state.documents || 1, 1);
-    return Math.round(40 + (state.processedDocuments / total) * 60);
+    return Math.round(40 + (state.processedDocuments / total) * 55);
   }
 
   return 0;
@@ -274,6 +282,16 @@ function entryToAthleteCard(entry) {
     isRankable: entry.isRankable !== false,
     hasValidPowerliftingTotal: entry.hasValidPowerliftingTotal !== false,
     competitionYear: entry.competition.year,
+    equipment: entry.equipment || null,
+    ...(entry.country && { country: entry.country }),
+    ...(entry.rankingAthleteId && { rankingAthleteId: entry.rankingAthleteId }),
+    ...(entry.sourceFederation && {
+      sourceFederation: entry.sourceFederation,
+      bestLifts: entry.bestLifts,
+      resultArchive: entry.resultArchive,
+      officialResultsUrls: entry.competition.officialResultsUrls,
+      competitionDateApproximate: entry.competition.dateApproximate,
+    }),
     ...(entry.sourceReview && { sourceReview: entry.sourceReview }),
   };
 }
@@ -367,15 +385,25 @@ async function buildIndex({ onProgress } = {}) {
     if (onProgress) onProgress({ ...state });
   };
 
+  const internationalBuild = fetchInternationalResults(
+    async (url) => Buffer.from((await client.get(url)).data), COMPETITION_YEARS, (warning) => state.warnings.push(warning)
+  );
+
   const discoveredPages = new Map();
   const directDocs = new Map();
+  const aepInternationalMeets = new Map();
 
-  for (const seedUrl of SEED_YEAR_PAGES) {
+  for (const [yearIndex, seedUrl] of SEED_YEAR_PAGES.entries()) {
     try {
       const html = await fetchText(client, seedUrl);
       const found = discoverCompetitionPages(html, seedUrl);
       found.pages.forEach((page) => discoveredPages.set(page.url, page));
       found.directDocs.forEach((doc) => directDocs.set(doc.url, doc));
+      for (const meet of findAepInternationalMeets(html, seedUrl, COMPETITION_YEARS[yearIndex])) {
+        meet.links = [];
+        aepInternationalMeets.set(meet.url, meet);
+        if (!discoveredPages.has(meet.url)) discoveredPages.set(meet.url, { url: meet.url, anchorText: meet.title });
+      }
     } catch (error) {
       state.warnings.push(`No se pudo leer ${seedUrl}: ${error.message}`);
     }
@@ -398,6 +426,8 @@ async function buildIndex({ onProgress } = {}) {
           // merge puede usar Excel para los campos tabulares y PDF para
           // recuperar nulos que en Excel antiguo solo aparecen en rojo/tachado.
           const docs = extractDocumentsFromCompetitionPage(html, page.url);
+          const internationalMeet = aepInternationalMeets.get(page.url);
+          if (internationalMeet) internationalMeet.links = aepInternationalLinks(html, page.url);
           const pageMeta = extractPageMeta(html, page.url, page.anchorText);
           pageMetas.push({
             url: page.url,
@@ -440,7 +470,28 @@ async function buildIndex({ onProgress } = {}) {
   );
 
   const individualEntries = rawEntries.filter((entry) => !parserPrivate.resultLooksLikeTeamOrSummary(entry));
-  const mergedEntries = mergeAthleteEntries(individualEntries).map(reviewResult);
+  const domestic = [];
+  const aepInternational = [];
+  for (const entry of mergeAthleteEntries(individualEntries).map(reviewResult)) {
+    const meet = aepInternationalMeets.get(entry.competition.meetPageUrl);
+    if (!meet) {
+      domestic.push(entry);
+      continue;
+    }
+    const spanishEntry = classifyAepInternational(entry, meet);
+    if (spanishEntry) aepInternational.push(spanishEntry);
+    else {
+      // Keep athletes already listed in the general search without treating
+      // them as Spanish marks in the ranking.
+      const team = normalizeName(entry.club).toUpperCase();
+      domestic.push({ ...entry, country: /^[A-Z]{3}$/.test(team) ? team : 'UNK' });
+    }
+  }
+  log({ phase: 'international' });
+  const external = connectAepInternationalPages(await internationalBuild, [...aepInternationalMeets.values()]);
+  const international = alignInternationalNames(mergeInternationalResults(aepInternational, external), domestic);
+  const mergedEntries = [...domestic, ...international];
+  assignRankingIdentities(mergedEntries);
   const athletes = buildAthleteIndex(mergedEntries);
 
   const index = {
@@ -448,6 +499,8 @@ async function buildIndex({ onProgress } = {}) {
     seedPages: SEED_YEAR_PAGES,
     competitionPagesIndexed: competitionPages.length,
     documentsIndexed: allDocs.size,
+    internationalEntryCount: international.length,
+    internationalWithAepPageCount: international.filter((entry) => aepInternationalMeets.has(entry.competition.meetPageUrl)).length,
     athleteCount: athletes.length,
     entryCount: mergedEntries.length,
     warnings: state.warnings,

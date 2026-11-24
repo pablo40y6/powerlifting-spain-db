@@ -16,6 +16,91 @@ const controls = {
   sort: $('sortSelect'),
 };
 
+const rankingControls = {
+  sex: $('rankingSex'),
+  category: $('rankingCategory'),
+  equipment: $('rankingEquipment'),
+  metric: $('rankingMetric'),
+};
+const rankingCategories = {
+  F: ['-43kg', '-47kg', '-52kg', '-57kg', '-63kg', '-69kg', '-76kg', '-84kg', '+84kg'],
+  M: ['-53kg', '-59kg', '-66kg', '-74kg', '-83kg', '-93kg', '-105kg', '-120kg', '+120kg'],
+};
+
+function hydrateRankingCategories() {
+  const select = rankingControls.category;
+  select.replaceChildren();
+  for (const category of rankingCategories[rankingControls.sex.value]) {
+    const option = document.createElement('option');
+    option.value = category;
+    option.textContent = category;
+    select.appendChild(option);
+  }
+  select.value = rankingControls.sex.value === 'F' ? '-57kg' : '-83kg';
+}
+
+function rankingCell(row, text, className) {
+  const cell = document.createElement('td');
+  cell.textContent = text;
+  if (className) cell.className = className;
+  row.appendChild(cell);
+  return cell;
+}
+
+function renderRanking() {
+  if (!state.index || $('rankingView').hidden) return;
+  const options = Object.fromEntries(Object.entries(rankingControls).map(([key, control]) => [key, control.value]));
+  const ranked = aepRanking.topRanking(state.rows, options);
+  const body = $('rankingBody');
+  body.replaceChildren();
+  $('rankingSummary').textContent = ranked.length
+    ? `${ranked.length} ${ranked.length === 1 ? 'atleta' : 'atletas'} · ${options.category}`
+    : 'Sin marcas vigentes para estos filtros.';
+  const points = options.metric === 'ipfgl';
+  for (const [index, { row, value, expiration, daysRemaining }] of ranked.entries()) {
+    const tr = document.createElement('tr');
+    rankingCell(tr, String(index + 1), 'numeric');
+    const nameCell = rankingCell(tr, '');
+    const athlete = document.createElement('button');
+    athlete.type = 'button';
+    athlete.className = 'link-button';
+    athlete.dataset.athlete = row.athleteId;
+    if (row.rankingAthleteId) athlete.dataset.rankingAthlete = row.rankingAthleteId;
+    athlete.textContent = row.athleteName;
+    nameCell.appendChild(athlete);
+    rankingCell(tr, `${formatNumber(value, points ? 3 : 2)} ${points ? 'GL' : 'kg'}`, 'numeric');
+    const dateCell = rankingCell(tr, formatDate(row.competitionDate, row.competitionYear));
+    if (row.competitionDateApproximate) {
+      const dateBasis = document.createElement('small');
+      dateBasis.className = 'ranking-context muted';
+      dateBasis.textContent = 'Inicio del campeonato';
+      dateCell.appendChild(dateBasis);
+    }
+    const meet = rankingCell(tr, row.competitionName);
+    const context = document.createElement('small');
+    context.className = 'ranking-context muted';
+    context.textContent = `${row.sourceFederation || 'AEP'} · ${eventTypeLabel(eventTypeFromRow(row))}`;
+    meet.appendChild(context);
+    if (row.resultsUrl) meet.insertAdjacentHTML('beforeend', link(row.resultsUrl, row.resultArchive ? 'Resultados' : 'Acta'));
+    const expiry = rankingCell(tr, daysRemaining === 0 ? 'Último día' : `${daysRemaining} ${daysRemaining === 1 ? 'día' : 'días'}`, 'ranking-expiry');
+    const date = document.createElement('small');
+    date.className = 'ranking-context';
+    date.textContent = formatDate(expiration);
+    expiry.appendChild(date);
+    body.appendChild(tr);
+  }
+}
+
+function switchView() {
+  const showRanking = location.hash === '#ranking';
+  $('searchView').hidden = showRanking;
+  $('rankingView').hidden = !showRanking;
+  $('searchViewLink').removeAttribute('aria-current');
+  $('rankingViewLink').removeAttribute('aria-current');
+  $(showRanking ? 'rankingViewLink' : 'searchViewLink').setAttribute('aria-current', 'page');
+  renderRanking();
+}
+
 function normalize(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9ñü\s-]/gi, ' ').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -157,7 +242,7 @@ function renderTable() {
       <td>${row.category || '—'}</td>
       <td class="numeric">${formatNumber(row.total)}</td>
       <td class="numeric">${formatNumber(row.ipfgl, 2)}</td>
-      <td>${row.competitionName || '—'}</td>
+      <td>${row.competitionName || '—'}${row.sourceFederation ? ` <small class="muted">· ${row.sourceFederation}</small>` : ''}</td>
       <td>${eventTypeLabel(eventTypeFromRow(row))}</td>
       <td class="links-cell">${link(row.meetPageUrl, 'Competición')} ${link(row.resultsUrl, 'Resultados')}</td>
     `;
@@ -207,7 +292,9 @@ function attemptText(attempt) {
 function renderAttempts(entry) {
   const labels = entry.attempts?.__labels || { squat: 'Sentadilla', bench: 'Banca', deadlift: 'Peso muerto' };
   return ['squat', 'bench', 'deadlift'].map((lift) => `
-    <tr><th>${labels[lift] || lift}</th><td>${(entry.attempts?.[lift] || []).map(attemptText).join('')}</td></tr>
+    <tr><th>${labels[lift] || lift}</th><td>${(entry.attempts?.[lift] || []).length
+      ? entry.attempts[lift].map(attemptText).join('')
+      : Number.isFinite(entry.bestLifts?.[lift]) ? `Mejor válido · ${formatNumber(entry.bestLifts[lift], 2)} kg` : '—'}</td></tr>
   `).join('');
 }
 
@@ -231,8 +318,10 @@ function renderSourceReview(review) {
   `;
 }
 
-function showAthlete(athleteId) {
-  const rows = state.rows.filter((row) => row.athleteId === athleteId)
+function showAthlete(athleteId, rankingAthleteId) {
+  const rows = state.rows.filter((row) => rankingAthleteId
+    ? row.rankingAthleteId === rankingAthleteId
+    : row.athleteId === athleteId)
     .sort((a, b) => String(b.competitionDate || '').localeCompare(String(a.competitionDate || '')));
   if (!rows.length) return;
   const bestTotal = bestBy(rows, 'total');
@@ -252,7 +341,9 @@ function showAthlete(athleteId) {
         <table class="attempt-table"><tbody>${renderAttempts(row)}</tbody></table>
         ${row.sourceReview ? renderSourceReview(row.sourceReview) : row.isRankable === false ? '<p class="muted"><strong>No rankeable:</strong> resultado incompleto o no individual.</p>' : ''}
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
-        <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${link(row.resultsUrl, 'Documento de resultados')}</p>
+        <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${row.meetPageUrl !== row.resultsUrl ? link(row.resultsUrl, 'Documento de resultados') : ''}
+          ${(row.officialResultsUrls || []).map((url, index) => link(url, `Acta federativa ${index + 1}`)).join(' ')}
+        </p>
       </article>
     `).join('')}
   `;
@@ -265,25 +356,43 @@ async function loadIndex() {
   state.index = await response.json();
   state.rows = flattenIndex(state.index);
   $('indexMeta').innerHTML = `<strong>${state.index.athleteCount?.toLocaleString('es-ES') || state.rows.length}</strong> atletas · <strong>${state.index.entryCount?.toLocaleString('es-ES') || state.rows.length}</strong> resultados<br><span>Actualizado: ${new Date(state.index.builtAt).toLocaleString('es-ES')}</span>`;
+  const internationalCount = state.index.internationalEntryCount || 0;
+  if (internationalCount) {
+    const sources = document.createElement('small');
+    sources.className = 'ranking-context';
+    const missing = (state.index.warnings || []).some((warning) => warning.includes('archivo internacional'));
+    sources.textContent = `${internationalCount.toLocaleString('es-ES')} resultados internacionales${missing ? ' · fuentes pendientes de actualización' : ''}`;
+    $('indexMeta').appendChild(sources);
+  }
   hydrateFilters();
   applyFilters();
+  renderRanking();
 }
 
 for (const control of Object.values(controls)) control.addEventListener('input', applyFilters);
+for (const control of Object.values(rankingControls)) control.addEventListener('change', () => {
+  if (control === rankingControls.sex) hydrateRankingCategories();
+  renderRanking();
+});
+hydrateRankingCategories();
+window.addEventListener('hashchange', switchView);
+switchView();
+window.setInterval(renderRanking, 60000);
 $('resetBtn').addEventListener('click', () => {
   for (const control of Object.values(controls)) control.value = '';
   controls.eventType.value = 'powerlifting';
   controls.sort.value = 'total-desc';
   applyFilters();
 });
-for (const id of ['resultsBody', 'reviewedAthletes']) {
+for (const id of ['resultsBody', 'reviewedAthletes', 'rankingBody']) {
   $(id).addEventListener('click', (event) => {
     const button = event.target.closest('[data-athlete]');
-    if (button) showAthlete(button.dataset.athlete);
+    if (button) showAthlete(button.dataset.athlete, button.dataset.rankingAthlete);
   });
 }
 
 loadIndex().catch((error) => {
   $('indexMeta').textContent = error.message;
+  $('rankingSummary').textContent = 'No se han podido cargar los resultados.';
   $('resultsBody').appendChild($('emptyTemplate').content.cloneNode(true));
 });

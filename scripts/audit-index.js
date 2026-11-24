@@ -137,20 +137,29 @@ function bestAttempt(attempts) {
   return Math.max(0, ...attempts.filter(validAttempt).map((attempt) => toNumber(attempt.weight)));
 }
 
+function officialBestLift(entry, movement) {
+  if (!['IPF', 'EPF'].includes(entry.sourceFederation) || entry.country !== 'ESP' ||
+      !/^https:\/\/(?:www\.openpowerlifting\.org|ipf\.powerlifting\.sport)\//.test(entry.resultsUrl || '')) return null;
+  const weight = entry.bestLifts?.[movement];
+  return Number.isFinite(weight) && weight > 0 ? weight : null;
+}
+
+function bestLift(entry, movement) {
+  return officialBestLift(entry, movement) ?? bestAttempt(getAttemptGroups(entry)[movement]);
+}
+
 function hasValidAttempt(entry, movement) {
-  return getAttemptGroups(entry)[movement].some(validAttempt);
+  return bestLift(entry, movement) > 0;
 }
 
 function computedPowerliftingTotal(entry) {
-  const attempts = getAttemptGroups(entry);
-  return bestAttempt(attempts.squat) + bestAttempt(attempts.bench) + bestAttempt(attempts.deadlift);
+  return ['squat', 'bench', 'deadlift'].reduce((total, lift) => total + bestLift(entry, lift), 0);
 }
 
 function computedSingleLiftTotal(entry) {
   const eventType = entry.eventType || entry.liftType || 'powerlifting';
-  const attempts = getAttemptGroups(entry);
   if (!['squat', 'bench', 'deadlift'].includes(eventType)) return null;
-  return bestAttempt(attempts[eventType]);
+  return bestLift(entry, eventType);
 }
 
 function hasValidPowerliftingTotalFromAttempts(entry) {
@@ -406,7 +415,9 @@ function auditAttempts(entry) {
       }
     }
   }
-  if ((toNumber(entry.total) > 0 || toNumber(entry.placing) !== null) && Object.values(groups).every((attempts) => attempts.length === 0 || attempts.every((attempt) => toNumber(attempt?.weight) === null))) {
+  const hasOfficialBest = Object.keys(groups).some((movement) => officialBestLift(entry, movement));
+  if (!hasOfficialBest && (toNumber(entry.total) > 0 || toNumber(entry.placing) !== null) &&
+      Object.values(groups).every((attempts) => attempts.length === 0 || attempts.every((attempt) => toNumber(attempt?.weight) === null))) {
     findings.push(makeFinding(entry, 'warning', 'all_attempts_empty_with_total_or_ranking', 'Todos los intentos están vacíos pero hay total o ranking.', { value: { total: entry.total, placing: entry.placing } }));
   }
   if (['squat', 'bench', 'deadlift'].includes(eventType)) {

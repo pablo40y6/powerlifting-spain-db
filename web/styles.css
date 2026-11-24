@@ -113,3 +113,19 @@ a:hover { text-decoration: underline; }
   .filters { position: static; }
   .detail-stats { grid-template-columns: 1fr; }
 }
+
+
+[hidden] { display: none !important; }
+.view-nav { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 24px 0; }
+.view-nav a { margin: 0; padding: 8px 12px; border-radius: 8px; }
+.view-nav a[aria-current] { background: var(--blue-dark); color: #fff; }
+.ranking-view { margin: 0 24px 24px; }
+.ranking-controls { display: flex; flex-wrap: wrap; gap: 16px; padding: 0 20px; }
+.ranking-controls label { display: grid; gap: 6px; min-width: 140px; }
+.ranking-notice { margin: 12px 20px 18px; }
+.ranking-expiry { color: var(--red); font-weight: 700; }
+.ranking-context { display: block; margin-top: 4px; }
+@media (max-width: 540px) {
+  .view-nav { padding-inline: 12px; }
+  .ranking-view { margin-inline: 12px; }
+}

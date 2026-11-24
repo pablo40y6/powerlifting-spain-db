@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <nav class="view-nav" aria-label="Vistas de resultados">
+      <a id="searchViewLink" href="#buscador" aria-current="page">Buscador</a>
+      <a id="rankingViewLink" href="#ranking">Ranking Top 50</a>
+    </nav>
     <header class="topbar">
       <div>
         <p class="eyebrow">Powerlifting Spain DB</p>
@@ -16,7 +20,7 @@
       <div id="indexMeta" class="index-meta">Cargando data/index.json…</div>
     </header>
 
-    <main class="layout">
+    <main id="searchView" class="layout">
       <aside class="filters" aria-label="Filtros de resultados">
         <h2>Filtros</h2>
         <label>Atleta<input id="athleteFilter" type="search" placeholder="Nombre o apellidos" /></label>
@@ -72,6 +76,38 @@
       </section>
     </main>
 
+    <main id="rankingView" class="ranking-view" hidden>
+      <section class="results-panel" aria-labelledby="rankingTitle">
+        <div class="panel-head">
+          <div>
+            <h2 id="rankingTitle">Top 50 vigente</h2>
+            <p id="rankingSummary" class="muted" aria-live="polite">Cargando resultados…</p>
+          </div>
+        </div>
+        <div class="ranking-controls">
+          <label>Sexo<select id="rankingSex"><option value="F">Femenino</option><option value="M" selected>Masculino</option></select></label>
+          <label>Categoría<select id="rankingCategory"></select></label>
+          <label>Modalidad<select id="rankingEquipment"><option value="raw">Clásico (RAW)</option><option value="equipped">Equipado</option></select></label>
+          <label>Marca<select id="rankingMetric"><option value="total">Total</option><option value="ipfgl">IPF GL</option><option value="squat">Sentadilla</option><option value="bench">Banca</option><option value="deadlift">Peso muerto</option></select></label>
+        </div>
+        <p class="ranking-notice muted">Una marca por atleta y categoría. La vigencia indica cuánto queda de la ventana de 18 meses del ranking.</p>
+        <details class="ranking-notice">
+          <summary>Vigencia y marcas mínimas AEP</summary>
+          <p>La marca histórica es el mayor total obtenido en una competición de la AEP. La Guía AEP 2026 distingue una mínima regional permanente y una mínima nacional con 18 meses de validez. Para el Open también cuentan la edición, las pruebas admitidas y las plazas.</p>
+          <p>Para las ediciones que solo publican un intervalo de fechas, el ranking usa el día de inicio. Banca combina resultados de powerlifting y banca sola dentro del mismo equipamiento.</p>
+          <p><a href="https://powerliftingspain.es/wp-content/uploads/2025/02/Campeonatos_Clasificacion_2025-02-25.pdf" target="_blank" rel="noopener noreferrer">Marca histórica AEP</a>
+          <a href="https://powerliftingspain.es/directrices-normativas-reglamentos/" target="_blank" rel="noopener noreferrer">Guía AEP y normativa</a>
+          <a href="https://www.openpowerlifting.org/" target="_blank" rel="noopener noreferrer">Archivo abierto OpenPowerlifting</a></p>
+        </details>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Puesto</th><th scope="col">Atleta</th><th scope="col">Marca</th><th scope="col">Fecha</th><th scope="col">Competición</th><th scope="col">Vigencia</th></tr></thead>
+            <tbody id="rankingBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
     <dialog id="athleteDialog">
       <form method="dialog"><button class="dialog-close" aria-label="Cerrar">×</button></form>
       <div id="athleteDetail"></div>
@@ -81,6 +117,7 @@
       <tr><td colspan="10" class="empty">No hay resultados que coincidan con los filtros.</td></tr>
     </template>
 
+    <script src="ranking.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

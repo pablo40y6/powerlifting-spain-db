@@ -42,6 +42,22 @@ const {
 const NON_FINISHING_PLACING = /^(?:DT|DQ|DSQ|DR|RD|TD|DD|DNF|DNS)$/i;
 const RESULT_PLACING = /^(?:\d+[ºª.]?|DT|DQ|DSQ|DR|RD|TD|DD|DNF|DNS|AI|\*|[-–—]+)$/i;
 
+function equipmentFromText(value) {
+  const text = normalizeName(value);
+  const hasRaw = /\b(?:raw|classic|clasicos?|clasicas?)\b/.test(text);
+  const hasEquipped = /\b(?:equipad[oa]s?|equipped|equip)\b/.test(text);
+  return hasRaw === hasEquipped ? null : hasRaw ? 'raw' : 'equipped';
+}
+
+function documentEquipment(baseMeta, title, subtitle) {
+  const descriptor = [baseMeta.resultsLabel, baseMeta.resultsUrl?.split('/').at(-1), title, subtitle, baseMeta.pageTitle];
+  for (const value of descriptor) {
+    const equipment = equipmentFromText(value);
+    if (equipment) return equipment;
+  }
+  return descriptor.some((value) => /\b(?:equipad[oa]s?|equipped|equip)\b/.test(normalizeName(value))) ? null : 'raw';
+}
+
 function buildCompetitionMeta(baseMeta = {}, partial = {}) {
   const name = cleanCompetitionTitle(
     partial.name ||
@@ -93,6 +109,7 @@ function buildCompetitionMeta(baseMeta = {}, partial = {}) {
     resultsLabel: baseMeta.resultsLabel || null,
     sourceType: baseMeta.sourceType || null,
     sourcePriority: baseMeta.sourcePriority || 0,
+    equipment: documentEquipment(baseMeta, name, subtitle),
   };
 }
 
@@ -144,6 +161,7 @@ function makeAthleteEntry({
   ipfgl,
   liftType,
   movementRanks,
+  equipment = competition?.equipment,
   isIndividualResult = true,
 }) {
   const athleteName = normalizeSpaces(lifterName);
@@ -170,6 +188,7 @@ function makeAthleteEntry({
     athleteNameNormalized,
     sex: sex || null,
     category,
+    equipment,
     placing: placing || null,
     yearOfBirth: yearOfBirth || null,
     club: club || null,
@@ -1097,6 +1116,8 @@ function parseExcelDocument(buffer, baseMeta) {
     let sex = sexFromResultsDocument(baseMeta) || sexFromText(sheetName);
     let currentLayout = null;
     let sectionLiftType = null;
+    let tableEquipment = competition.equipment;
+    let sectionEquipment = tableEquipment;
     let sexSection = null;
 
     for (let index = 0; index < sheetRows.length; index += 1) {
@@ -1110,6 +1131,7 @@ function parseExcelDocument(buffer, baseMeta) {
         currentLayout = null;
         category = null;
         sectionLiftType = null;
+        tableEquipment = sectionEquipment = competition.equipment;
         sexSection = null;
         continue;
       }
@@ -1120,6 +1142,7 @@ function parseExcelDocument(buffer, baseMeta) {
         if (rowSex !== sex || heading !== sexSection) {
           category = null;
           sectionLiftType = goodliftDocumentEvent(sectionText);
+          tableEquipment = sectionEquipment = equipmentFromText(sectionText) || competition.equipment;
         }
         sex = rowSex;
         sexSection = heading;
@@ -1140,6 +1163,7 @@ function parseExcelDocument(buffer, baseMeta) {
       if (categorySection) {
         category = categorySection.category;
         sectionLiftType = categorySection.liftType;
+        sectionEquipment = equipmentFromText(sectionCells[0]) || tableEquipment;
         continue;
       }
 
@@ -1176,6 +1200,7 @@ function parseExcelDocument(buffer, baseMeta) {
 
       const entry = makeAthleteEntry({
         competition,
+        equipment: sectionEquipment,
         sex,
         category: formatCategoryToken(row[currentLayout.categoryIndex]) || category,
         placing: currentLayout.isGoodlift && placingRaw === '—' && /^[A-Z]{2,3}$/.test(normalizeSpaces(row[currentLayout.totalIndex]))
@@ -2633,6 +2658,8 @@ function parsePdfText(rawText, baseMeta) {
   let inGoodliftDetailedScoresheet = !goodliftText;
   let tableLiftType = meta.liftType;
   let sectionLiftType = tableLiftType;
+  let tableEquipment = competition.equipment;
+  let sectionEquipment = tableEquipment;
   let inSummary = false;
   let hasCategoryColumn = false;
   const hasPointsColumn = lines.some((line) => /levantador.*\btotal\b.*\bipf\s*gl\s+pt\b/i.test(line));
@@ -2662,6 +2689,7 @@ function parsePdfText(rawText, baseMeta) {
       category = null;
       tableLiftType = goodliftDocumentEvent(line) || meta.liftType;
       sectionLiftType = tableLiftType;
+      tableEquipment = sectionEquipment = equipmentFromText(line) || competition.equipment;
       inSummary = false;
     }
     if (/^HOMBRES\b/i.test(line)) {
@@ -2669,6 +2697,7 @@ function parsePdfText(rawText, baseMeta) {
       category = null;
       tableLiftType = goodliftDocumentEvent(line) || meta.liftType;
       sectionLiftType = tableLiftType;
+      tableEquipment = sectionEquipment = equipmentFromText(line) || competition.equipment;
       inSummary = false;
     }
     if (inSummary) continue;
@@ -2678,6 +2707,7 @@ function parsePdfText(rawText, baseMeta) {
     if (lineCategory) {
       category = lineCategory;
       sectionLiftType = categorySection?.liftType || tableLiftType;
+      sectionEquipment = equipmentFromText(line) || tableEquipment;
       continue;
     }
 
@@ -2687,7 +2717,10 @@ function parsePdfText(rawText, baseMeta) {
     const canRecoverUnrankedRow = startsWithUnrankedPlacing && documentSex && currentSex === documentSex && hasPointsColumn;
     if (!canRecoverUnrankedRow && !isPotentialAthleteLine(line)) continue;
     const athlete = parsePdfAthleteLine(originalLine, competition, currentSex, category, sectionLiftType, hasCategoryColumn, hasPointsColumn);
-    if (athlete && (!startsWithUnrankedPlacing || (athlete.total === null && athlete.ipfgl === null))) entries.push(athlete);
+    if (athlete && (!startsWithUnrankedPlacing || (athlete.total === null && athlete.ipfgl === null))) {
+      athlete.equipment = sectionEquipment;
+      entries.push(athlete);
+    }
   }
 
   return repairEntriesUsingMovementRanks(entries);
@@ -2910,6 +2943,7 @@ function mergePreferredEntry(preferred, fallback) {
     ipfgl: conflictingTotals ? preferred.ipfgl : pickValue(preferred.ipfgl, fallback.ipfgl),
     liftType: pickValue(preferred.liftType, fallback.liftType),
     eventType,
+    equipment: pickValue(preferred.equipment, fallback.equipment),
     movementRanks: pickValue(preferred.movementRanks, fallback.movementRanks),
     attempts: selectedAttempts,
     isIndividualResult,

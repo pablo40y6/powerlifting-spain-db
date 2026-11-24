@@ -9,6 +9,7 @@ const dataDir = path.join(distDir, 'data');
 const required = [
   ['web/index.html', 'index.html'],
   ['web/app.js', 'app.js'],
+  ['web/ranking.js', 'ranking.js'],
   ['web/styles.css', 'styles.css'],
   ['data/index.json', 'data/index.json'],
 ];

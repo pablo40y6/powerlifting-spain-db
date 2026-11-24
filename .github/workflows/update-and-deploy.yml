@@ -24,6 +24,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      PLS_INTERNATIONAL_DIR: ${{ github.workspace }}/.cache/international
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,6 +41,13 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Restore international results cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/international
+          key: international-results-${{ github.run_id }}
+          restore-keys: international-results-
 
       - name: Build data index
         run: npm run build:index
