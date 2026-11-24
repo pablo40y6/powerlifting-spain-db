@@ -94,6 +94,21 @@ test('PDF conserva por separado nombre, nacimiento, coeficiente y puntuación po
   assert.deepEqual([entry.bodyweight, entry.category, entry.total, entry.ipfgl], [87.75, '-93kg', 512.5, 68.98]);
 });
 
+test('PDF separa del nombre el año pegado, la fecha abreviada y el prefijo del club', () => {
+  const metadata = { ...competition(), year: 2025 };
+  const marks = '82,10 60 115,0 -122,5 122,5 65,0 70,0 -75,0 145,0 155,0 -170,0 347,5 66,23';
+  const cases = [
+    ['Atleta de Prueba2001 GIMVIT', 2001, 'GIMVIT'],
+    ['Atleta de Prueba 01.11.00 HANGAR', 2000, 'HANGAR'],
+    ['Atleta de Prueba 203 ATPOW', null, 'ATPOW'],
+    ['Atleta de Prueba 720 POWERLIFTING OURENSE', null, '720 POWERLIFTING OURENSE'],
+  ];
+  for (const [nameAndClub, year, club] of cases) {
+    const entry = _private.parsePdfAthleteLine('1 ' + nameAndClub + ' ' + marks, metadata, 'F', '-84kg');
+    assert.deepEqual([entry.athleteName, entry.yearOfBirth, entry.club, entry.total], ['Atleta de Prueba', year, club, 347.5]);
+  }
+});
+
 test('Excel mixto mantiene la banca, el powerlifting y las fichas de dos homónimos', async () => {
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet([

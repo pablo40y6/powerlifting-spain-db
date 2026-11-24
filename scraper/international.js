@@ -117,7 +117,13 @@ function positiveNumber(text) {
 function makeEntry(event, result) {
   const eventType = result.eventType || (/bench press/i.test(event.title) ? 'bench' : 'powerlifting');
   const equipment = result.equipment || (/\bequipped\b/i.test(event.title) ? 'equipped' : /\bclassic\b/i.test(event.title) ? 'raw' : null);
-  const { athleteName, yearOfBirth, sex, category, placing, bodyweight, bestLifts, attempts, total, ipfgl } = result;
+  const { yearOfBirth, sex, category, placing, bodyweight, bestLifts, attempts, total, ipfgl } = result;
+  let { athleteName } = result;
+  // La preselección AEP del Europeo Junior 2025 identifica a Daniel Tomás Gómez.
+  // El Mundial IPF de la misma temporada lo abrevia como «Gomez Daniel».
+  if (sex === 'M' && yearOfBirth === 2002 && /^(?:daniel gomez 3|gomez daniel)$/.test(normalizeName(athleteName))) {
+    athleteName = 'Daniel Tomás Gómez';
+  }
   if (!equipment || !sex || !category || !bodyweight || !/\p{L}/u.test(athleteName)) return null;
   const validLifts = eventType === 'bench' ? Boolean(bestLifts.bench) : MOVEMENTS.every((lift) => bestLifts[lift]);
   const rankable = Boolean(total && /^\d+$/.test(placing) && validLifts);
@@ -303,6 +309,7 @@ const VERIFIED_RANKING_BIRTH_YEAR_ALIASES = {
   'M|qiu zuhang': { 2001: 2002, 2002: 2002 },
   // AEP: selección y resultados Junior 2026; IPF: Mundial Junior 2026, Sun City.
   'M|asensio carlos moratinos': { 2003: 2003, 2004: 2003 },
+  'M|daniel gomez tomas': { 2000: 2002, 2002: 2002 },
   // La AEP atribuye los 787,5 kg de Oulu al atleta de RV Strength:
   // https://powerliftingspain.es/wp-content/uploads/2026/02/REGISTRO-25022026.pdf
   'M|hoyo martinez ruben': { 1980: 1986, 1986: 1986 },
@@ -312,7 +319,9 @@ function assignRankingIdentities(entries) {
   const groups = new Map();
   for (const entry of entries) {
     if (!entry.sex || !entry.athleteNameNormalized) continue;
-    const tokens = entry.athleteNameNormalized.split(' ').filter(Boolean).sort().join(' ');
+    const normalized = entry.sex === 'M' && entry.athleteNameNormalized === 'de tomas gomez daniel' && entry.yearOfBirth === 2002
+      ? 'tomas gomez daniel' : entry.athleteNameNormalized;
+    const tokens = normalized.split(' ').filter(Boolean).sort().join(' ');
     const key = `${entry.sex}|${tokens}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(entry);

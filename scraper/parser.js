@@ -2334,21 +2334,22 @@ function tokenLooksLikeClubStart(token) {
   return false;
 }
 
-function splitPdfNameAndClubWithoutYear(tokens) {
+function splitPdfNameAndClubWithoutYear(tokens, competitionYear) {
   const cleanTokens = tokens.filter((token) => normalizeSpaces(token));
   if (cleanTokens.length < 3) return null;
-
-  for (let index = 2; index < cleanTokens.length; index += 1) {
-    if (!tokenLooksLikeClubStart(cleanTokens[index])) continue;
-    const name = normalizeSpaces(cleanTokens.slice(0, index).join(' '));
-    const club = normalizeSpaces(cleanTokens.slice(index).join(' '));
-    if (name && club) return { lifterName: name, club };
+  let splitIndex = cleanTokens.findIndex((token, index) => index >= 2 && tokenLooksLikeClubStart(token));
+  if (splitIndex === -1) splitIndex = Math.max(2, cleanTokens.length - 2);
+  if (splitIndex > 2 && /^\d{2,3}$/.test(cleanTokens[splitIndex - 1]) && /^powerlifting$/i.test(cleanTokens[splitIndex])) {
+    splitIndex -= 1;
   }
-
-  const splitIndex = Math.max(2, cleanTokens.length - 2);
+  const name = cleanTokens.slice(0, splitIndex).join(' ');
+  // PDF extraction can glue the year to the name. Some acts publish a date
+  // with dots or a truncated year. Keep the name clean in all three cases.
+  const suffix = name.match(/(?:((?<=\p{L})(?:19|20)\d{2})|\s+(\d{1,2}\.\d{1,2}\.(?:\d{2}|\d{4})|(?:19|20)\d))$/u);
   return {
-    lifterName: normalizeSpaces(cleanTokens.slice(0, splitIndex).join(' ')),
-    club: normalizeSpaces(cleanTokens.slice(splitIndex).join(' ')),
+    lifterName: suffix ? name.slice(0, suffix.index) : name,
+    club: cleanTokens.slice(splitIndex).join(' '),
+    yearOfBirth: suffix ? goodliftBirthYear(suffix[1] || suffix[2], competitionYear) : null,
   };
 }
 
@@ -2438,7 +2439,7 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
   const bodyweightOrder = findPdfBodyweightOrder(tokens, nameStartIndex + 2, categoryForBodyweight, placing);
   if (!bodyweightOrder) return null;
 
-  const split = splitPdfNameAndClubWithoutYear(tokens.slice(nameStartIndex, bodyweightOrder.index));
+  const split = splitPdfNameAndClubWithoutYear(tokens.slice(nameStartIndex, bodyweightOrder.index), competition.year);
   if (!split || !split.lifterName || !split.club) return null;
 
   const totalIpfgl = resolvePdfRowStats(tokens, placing, liftType, bodyweightOrder, hasPointsColumn);
@@ -2481,7 +2482,7 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
     category: rowCategory || inferPowerliftingCategoryFromBodyweight(bodyweightOrder.bodyweight, sex) || fallbackCategory,
     placing,
     lifterName: split.lifterName,
-    yearOfBirth: null,
+    yearOfBirth: split.yearOfBirth,
     club: split.club,
     bodyweight: bodyweightOrder.bodyweight,
     coefficient: null,
@@ -2502,7 +2503,7 @@ function parsePdfOrdinalResult(line, competition, sex) {
   const person = nameAndClub.split(' ');
   const placing = RESULT_PLACING.test(person[0]) ? person.shift() : null;
   const fields = results.split(' ');
-  const athlete = splitPdfNameAndClubWithoutYear(person);
+  const athlete = splitPdfNameAndClubWithoutYear(person, competition.year);
   const category = formatCategoryToken(categoryToken);
   const bodyweight = parseLocaleNumber(weight);
   if (fields.length !== 11 || !athlete || !category || !bodyweightMatchesCategory(bodyweight, category)) return null;
