@@ -76,6 +76,8 @@ button:hover { background: var(--blue-dark); }
 .results-panel { min-width: 0; overflow: hidden; }
 .panel-head { display: flex; justify-content: space-between; gap: 16px; padding: 18px; border-bottom: 1px solid var(--line); }
 .panel-head p { margin: 4px 0 0; }
+.reviewed-results { padding: 0 20px 14px; }
+.reviewed-results summary { cursor: pointer; }
 .table-wrap { overflow: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }

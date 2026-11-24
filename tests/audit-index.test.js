@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { reviewResult } = require('../scraper/reviewed-results');
 const {
   auditIndex,
   expectedCategoryForBodyweight,
@@ -416,4 +417,46 @@ test('el peso fuera de la categoria queda registrado en las filas sin clasificac
   const finding = report.findings.find((item) => item.rowKey === 'weigh-in' && item.type === 'non_rankable_category_bodyweight_mismatch');
   assert.equal(finding?.severity, 'info');
   assert.equal(finding?.expected, '-69kg');
+});
+
+test('una discrepancia de total contrastada queda fuera del ranking y conserva la marca publicada', () => {
+  const original = entry({
+    athleteName: 'Blasco Aledo Sandra', sex: 'F', bodyweight: 67.66, category: '-69kg',
+    competitionYear: 2024, competitionDate: '2024-06-09',
+    resultsUrl: 'https://powerliftingspain.es/wp-content/uploads/2024/06/Clasificaciones_AEP-2_Regional_Valencia_Chiva_2024.xls',
+    placing: '2', total: 350, ipfgl: 73.33, attempts: {
+      squat: [{ weight: 125, good: true }],
+      bench: [{ weight: 57.5, good: true }],
+      deadlift: [{ weight: 162.5, good: true }],
+    },
+  });
+  const reviewed = reviewResult(original);
+  assert.deepEqual([reviewed.total, reviewed.ipfgl, reviewed.placing, reviewed.isRankable], [null, null, null, false]);
+  assert.equal(reviewed.sourceReview.published.total, 350);
+  assert.equal(reviewed.sourceReview.attemptSum, 345);
+  assert.equal(auditIndex([reviewed]).summary.warnings, 0);
+  assert.ok(findingTypes(auditIndex([{ ...reviewed, total: 345 }])).includes('invalid_source_review'));
+
+  const revised = { ...original, attempts: { ...original.attempts, deadlift: [{ weight: 167.5, good: true }] } };
+  assert.equal(reviewResult(revised), revised);
+  assert.equal(auditIndex([revised]).summary.warnings, 0);
+});
+
+test('una categoria incompatible solo se retira con una revisión de origen verificable', () => {
+  const original = entry({
+    athleteName: 'Trojanouwski Serge', bodyweight: 81.62, category: '-74kg',
+    placing: 'AI', eventType: 'bench', total: 115, ipfgl: 58.25900000000001,
+    attempts: { bench: [{ weight: 115, good: true }] },
+    competitionYear: 2024, competitionDate: '2024-07-13',
+    resultsUrl: 'https://powerliftingspain.es/wp-content/uploads/2024/07/Clasificacion_AEP-1_Masters_Huercal-Overa_2024-07-19.xls',
+  });
+  const reviewed = reviewResult(original);
+  assert.equal(reviewed.category, null);
+  assert.equal(reviewed.sourceReview.published.category, '-74kg');
+  const report = auditIndex([reviewed]);
+  assert.equal(report.summary.errors, 0);
+  assert.equal(report.summary.warnings, 0);
+  const unknown = { ...reviewed, athleteName: 'Atleta sin contrastar' };
+  assert.ok(findingTypes(auditIndex([unknown])).includes('category_missing'));
+  assert.ok(findingTypes(auditIndex([unknown])).includes('invalid_source_review'));
 });

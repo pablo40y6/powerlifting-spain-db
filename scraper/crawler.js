@@ -5,6 +5,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const pLimit = require('p-limit').default;
 const sanitizeFilename = require('sanitize-filename');
+const { reviewResult } = require('./reviewed-results');
 const { parseDocument, mergeAthleteEntries, _private: parserPrivate } = require('./parser');
 const {
   cleanCompetitionTitle,
@@ -273,6 +274,7 @@ function entryToAthleteCard(entry) {
     isRankable: entry.isRankable !== false,
     hasValidPowerliftingTotal: entry.hasValidPowerliftingTotal !== false,
     competitionYear: entry.competition.year,
+    ...(entry.sourceReview && { sourceReview: entry.sourceReview }),
   };
 }
 
@@ -438,7 +440,7 @@ async function buildIndex({ onProgress } = {}) {
   );
 
   const individualEntries = rawEntries.filter((entry) => !parserPrivate.resultLooksLikeTeamOrSummary(entry));
-  const mergedEntries = mergeAthleteEntries(individualEntries);
+  const mergedEntries = mergeAthleteEntries(individualEntries).map(reviewResult);
   const athletes = buildAthleteIndex(mergedEntries);
 
   const index = {

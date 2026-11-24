@@ -165,9 +165,30 @@ function renderTable() {
   }
 }
 
+function renderReviewedAthletes() {
+  const query = normalize(controls.athlete.value);
+  const reviewed = new Map(state.rows
+    .filter((row) => row.sourceReview && (!query || allTokensPresent(query, row.athleteName)))
+    .map((row) => [row.athleteId, row.athleteName]));
+  $('reviewedResults').hidden = reviewed.size === 0;
+  const list = $('reviewedAthletes');
+  list.replaceChildren();
+  for (const [id, name] of reviewed) {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'link-button';
+    button.dataset.athlete = id;
+    button.textContent = name;
+    item.appendChild(button);
+    list.appendChild(item);
+  }
+}
+
 function applyFilters() {
   state.filtered = state.rows.filter(matches).sort(compareRows);
   renderTable();
+  renderReviewedAthletes();
 }
 
 function bestBy(rows, key) {
@@ -190,6 +211,26 @@ function renderAttempts(entry) {
   `).join('');
 }
 
+const sourceReviewMessages = {
+  conflicting_total: 'El total del acta difiere de la suma de los mejores intentos válidos.',
+  conflicting_category: 'El peso anotado supera el límite de la categoría del acta.',
+  incomplete_total: 'El acta no acredita un intento válido en los tres movimientos.',
+  unclassified_placing: 'El acta indica un puesto y un total de 0 kg.',
+  disqualified_score: 'El acta indica descalificación y publica una puntuación.',
+};
+
+function renderSourceReview(review) {
+  const reason = sourceReviewMessages[review?.reason];
+  if (!reason || !review.published) return '';
+  const { category, placing, total, ipfgl } = review.published;
+  const publishedCategory = /^[+-]\d{2,3}kg$/.test(category) ? category : '—';
+  const publishedPlacing = /^(?:\d+|AI|DQ|[-–—]+)$/.test(placing) ? placing : '—';
+  return `
+    <p class="muted"><strong>Fuera del ranking.</strong> ${reason}</p>
+    <p class="muted"><strong>En el acta</strong> · Categoría ${publishedCategory} · Puesto ${publishedPlacing} · Total ${formatNumber(total)} kg · IPF GL ${formatNumber(ipfgl, 2)}${Number.isFinite(review.attemptSum) ? ` · Suma de intentos ${formatNumber(review.attemptSum)} kg` : ''}</p>
+  `;
+}
+
 function showAthlete(athleteId) {
   const rows = state.rows.filter((row) => row.athleteId === athleteId)
     .sort((a, b) => String(b.competitionDate || '').localeCompare(String(a.competitionDate || '')));
@@ -209,7 +250,7 @@ function showAthlete(athleteId) {
         <h3>${row.competitionName || 'Competición'}</h3>
         <p class="muted">${formatDate(row.competitionDate, row.competitionYear)} · ${eventTypeLabel(eventTypeFromRow(row))} · ${row.sex || '—'} · ${row.category || '—'} · ${row.club || '—'}</p>
         <table class="attempt-table"><tbody>${renderAttempts(row)}</tbody></table>
-        ${row.isRankable === false ? '<p class="muted"><strong>No rankeable:</strong> resultado incompleto o no individual.</p>' : ''}
+        ${row.sourceReview ? renderSourceReview(row.sourceReview) : row.isRankable === false ? '<p class="muted"><strong>No rankeable:</strong> resultado incompleto o no individual.</p>' : ''}
         <p><strong>Total:</strong> ${formatNumber(row.total)} kg · <strong>IPF GL:</strong> ${formatNumber(row.ipfgl, 2)}</p>
         <p class="links-cell">${link(row.meetPageUrl, 'Página de competición')} ${link(row.resultsUrl, 'Documento de resultados')}</p>
       </article>
@@ -235,10 +276,12 @@ $('resetBtn').addEventListener('click', () => {
   controls.sort.value = 'total-desc';
   applyFilters();
 });
-$('resultsBody').addEventListener('click', (event) => {
-  const button = event.target.closest('[data-athlete]');
-  if (button) showAthlete(button.dataset.athlete);
-});
+for (const id of ['resultsBody', 'reviewedAthletes']) {
+  $(id).addEventListener('click', (event) => {
+    const button = event.target.closest('[data-athlete]');
+    if (button) showAthlete(button.dataset.athlete);
+  });
+}
 
 loadIndex().catch((error) => {
   $('indexMeta').textContent = error.message;

@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeName, extractYear } = require('../scraper/utils');
+const { validateSourceReview } = require('../scraper/reviewed-results');
 
 const DEFAULT_INDEX_PATH = path.join(__dirname, '..', 'data', 'index.json');
 const DEFAULT_REPORT_JSON_PATH = path.join(__dirname, '..', 'data', 'audit-report.json');
@@ -223,12 +224,12 @@ function auditColumnStructure(entry) {
   return findings;
 }
 
-function auditCategory(entry) {
+function auditCategory(entry, reviewedCategory = false) {
   const findings = [];
   const bw = toNumber(entry.bodyweight);
   const expected = expectedCategoryForBodyweight(entry.sex, bw);
   const category = normalizeCategory(entry.category);
-  if (bw && entry.sex && !category) {
+  if (bw && entry.sex && !category && !reviewedCategory) {
     findings.push(makeFinding(entry, 'warning', 'category_missing', 'Categoría vacía con peso corporal y sexo.', { value: entry.category, expected }));
     return findings;
   }
@@ -698,9 +699,15 @@ function auditIndex(index, options = {}) {
   const entries = flattenEntries(index);
   const findings = [];
   for (const entry of entries) {
+    const reviewed = entry.sourceReview && validateSourceReview(entry);
+    if (entry.sourceReview) {
+      findings.push(reviewed
+        ? makeFinding(entry, 'info', 'reviewed_source_result', 'Fila contrastada con el acta. Los datos publicados se conservan en la ficha.', { value: entry.sourceReview })
+        : makeFinding(entry, 'error', 'invalid_source_review', 'La revisión de la fila no coincide con el acta registrada.', { value: entry.sourceReview }));
+    }
     findings.push(
       ...auditColumnStructure(entry),
-      ...auditCategory(entry),
+      ...auditCategory(entry, reviewed && entry.sourceReview.reason === 'conflicting_category'),
       ...auditPowerliftingRankability(entry),
       ...auditIpfgl(entry),
       ...auditTotals(entry),
@@ -786,6 +793,16 @@ function renderMarkdown(report) {
     const types = Object.entries(source.byType).sort((a, b) => b[1] - a[1]).map(([type, count]) => `${type} (${count})`).join(', ');
     lines.push(`- ${source.findings} hallazgos. ${types}. [Acta](${source.url})`);
   }
+  const reviewed = report.findings.filter((finding) => finding.type === 'reviewed_source_result');
+  if (reviewed.length) {
+    lines.push('', '## Resultados contrastados fuera del ranking', '');
+    lines.push('| Atleta | Categoría en acta | Puesto en acta | Total en acta (kg) | IPF GL en acta | Suma de intentos (kg) | Fuente |');
+    lines.push('| --- | --- | --- | ---: | ---: | ---: | --- |');
+    for (const finding of reviewed) {
+      const { published, attemptSum } = finding.value;
+      lines.push(`| ${finding.athleteName} | ${published.category ?? '—'} | ${published.placing ?? '—'} | ${published.total ?? '—'} | ${published.ipfgl ?? '—'} | ${attemptSum ?? '—'} | [Acta](${finding.resultsUrl}) |`);
+    }
+  }
   lines.push('', '## Atletas de regresión', '');
   for (const athlete of report.regression.athletes) lines.push(`- ${athlete.athleteName}: ${athlete.count}`);
   lines.push(`- Aranda 2026 encontrado: ${report.regression.aranda.has2026Result ? 'sí' : 'no'}`);
@@ -822,6 +839,7 @@ function printSummary(report) {
 function parseArgs(argv) {
   return {
     strict: argv.includes('--strict'),
+    failOnWarnings: argv.includes('--fail-on-warnings'),
     indexPath: argv.find((arg) => arg.startsWith('--index='))?.slice('--index='.length) || DEFAULT_INDEX_PATH,
     jsonPath: argv.find((arg) => arg.startsWith('--json='))?.slice('--json='.length) || DEFAULT_REPORT_JSON_PATH,
     mdPath: argv.find((arg) => arg.startsWith('--md='))?.slice('--md='.length) || DEFAULT_REPORT_MD_PATH,
@@ -833,7 +851,7 @@ function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (!fs.existsSync(options.indexPath)) {
     console.warn(`No existe ${path.relative(process.cwd(), options.indexPath)}; no se genera informe.`);
-    return 0;
+    return options.strict || options.failOnWarnings ? 1 : 0;
   }
   const index = JSON.parse(fs.readFileSync(options.indexPath, 'utf8'));
   const report = auditIndex(index);
@@ -847,7 +865,11 @@ function main(argv = process.argv.slice(2)) {
   console.log(`\nInforme JSON: ${path.relative(process.cwd(), options.jsonPath)}`);
   console.log(`Informe Markdown: ${path.relative(process.cwd(), options.mdPath)}`);
   console.log(`Debug total_attempt_sum_mismatch: ${path.relative(process.cwd(), options.totalAttemptSumMismatchDebugPath)}`);
-  return options.strict && report.summary.errors > 0 ? 1 : 0;
+  const downloadWarnings = Array.isArray(index.warnings) ? index.warnings.length : 0;
+  console.log(`Avisos de descarga: ${downloadWarnings}`);
+  const failed = ((options.strict || options.failOnWarnings) && report.summary.errors > 0) ||
+    (options.failOnWarnings && (report.summary.warnings > 0 || downloadWarnings > 0));
+  return failed ? 1 : 0;
 }
 
 if (require.main === module) {
