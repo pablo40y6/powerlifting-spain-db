@@ -15,6 +15,75 @@ function hasFailedAttempt(entry) {
   );
 }
 
+const GOODLIFT_HEADER = [
+  'Rnk', 'Name', 'd.o.b.', 'Team', 'Bwt', 'GL Coef', 'Lot',
+  'All Squat', '', '', '', 'All Bench Press', '', '', '', 'All Deadlift', '', '', '', 'Total', 'GL Pts', 'Pts',
+];
+
+test('GOODLIFT XLS de Poblete conserva resultados, descalificaciones y fecha de inicio', async () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['Asociacion Espanola Powerlifting'],
+    ['Copa de España de Powerlifting y de Press Banca, Poblete (Espana), 17-18.10.2026'],
+    ['DETAILED SCORESHEET'], GOODLIFT_HEADER, ['Open'], ['-52kg'],
+    [1, 'Atleta Primera', '01.01.05', 'CLUB', 51.9, 0.25, 5, 110, 115, 120, 2, 67.5, 70, 75, 2, 135, 142.5, '145.0-n', 1, 340, 85],
+    ['—', 'Atleta Segunda', '01.01.97', 'CLUB', 51.1, 0.25, 8, 110, 120, 127.5, 2, 67.5, 70, 80, 1, '-130', '-140', '-150', '—', 'DSQ', '—'],
+    ['Team (points)'], GOODLIFT_HEADER,
+    [1, 'Atleta Resumen', '01.01.05', 'CLUB', 51.9, 0.25, 5, 110, 115, 120, 2, 67.5, 70, 75, 2, 135, 142.5, 145, 1, 340, 85],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Resultados');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xls' });
+  const entries = await parseDocument(buffer, '.xls', { resultsLabel: 'Resultados Femenino' });
+
+  assert.equal(entries.length, 2);
+  const [ranked, disqualified] = entries;
+  assert.deepEqual([ranked.sex, ranked.category, ranked.yearOfBirth, ranked.eventType], ['F', '-52kg', 2005, 'powerlifting']);
+  assert.deepEqual([ranked.total, ranked.ipfgl, ranked.competition.date], [340, 85, '2026-10-17']);
+  assert.deepEqual([ranked.attempts.deadlift[2].weight, ranked.attempts.deadlift[2].good], [145, true]);
+  assert.equal(ranked.isRankable, true);
+  assert.deepEqual([disqualified.placing, disqualified.yearOfBirth, disqualified.isRankable], ['DSQ', 1997, false]);
+});
+
+test('GOODLIFT XLS de banca distingue las secciones femenina y masculina', async () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['Asociacion Espanola Powerlifting'],
+    ['Copa de España de Press Banca, Poblete (Espana), 17-18.10.2026'],
+    ['DETAILED SCORESHEET'], GOODLIFT_HEADER,
+    ['Open Women'], ['-57kg'],
+    [1, 'Atleta Primera', '01.01.08', 'CLUB', 56.3, '', 2, '-', '-', '-', '—', 75, 80, '82.5-wbs', 1, '-', '-', '-', '—', 82.5, 74.03],
+    ['Open Men'], ['120+kg'],
+    [1, 'Atleta Segundo', '01.01.97', 'CLUB', 189.9, '', 7, '-', '-', '-', '—', 185, 195, 205, 1, '-', '-', '-', '—', 195, 69.77],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Resultados');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xls' });
+  const entries = await parseDocument(buffer, '.xls', { resultsLabel: 'Resultados Banca' });
+
+  assert.deepEqual(entries.map((entry) => [entry.sex, entry.category, entry.eventType, entry.total, entry.isRankable]), [
+    ['F', '-57kg', 'bench', 82.5, true],
+    ['M', '+120kg', 'bench', 195, true],
+  ]);
+  assert.equal(entries[1].attempts.bench[2].good, false);
+});
+
+test('PDF de 2021 distingue lote, puesto, nombre, club y peso corporal', () => {
+  const entry = _private.parsePdfAthleteLine(
+    '96 19º Atleta de Prueba CLUB DE EJEMPLO Madrid 1998 101,60 JUN 105 150,0 -160,0 160,0 85,0 90,0 95,0 180,0 190,0 -200,0 445,0 55,80',
+    competition(), 'M', '-105kg'
+  );
+  assert.deepEqual([entry.athleteName, entry.club, entry.placing, entry.order], ['Atleta de Prueba', 'CLUB DE EJEMPLO Madrid', '19', 96]);
+  assert.deepEqual([entry.category, entry.bodyweight, entry.total], ['-105kg', 101.6, 445]);
+  assert.equal(entry.attempts.squat[1].good, false);
+});
+
+test('PDF de 2022 interpreta 43 como puesto antes del nombre del atleta', () => {
+  const entry = _private.parsePdfAthleteLine(
+    '43 Atleta de Prueba 1997 CLUB 75,76 0.1450 57 140.0 152.5 162.5 44 92.5 100.0 102.5 41 175.0 187.5 200.0 43 440.0 63.80 1',
+    competition(), 'M', null
+  );
+  assert.deepEqual([entry.placing, entry.category, entry.bodyweight, entry.total], ['43', '-83kg', 75.76, 440]);
+});
+
 
 
 

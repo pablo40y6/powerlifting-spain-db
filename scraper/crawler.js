@@ -23,7 +23,7 @@ const CACHE_DIR = process.env.PLS_DOCS_DIR || path.join(os.tmpdir(), 'powerlifti
 const INDEX_FILE = path.join(DATA_DIR, 'index.json');
 
 const SEED_YEAR_PAGES = [2026, 2025, 2024, 2023, 2022, 2021].map(
-  (year) => `https://powerliftingspain.es/campeonatos-ano-${year}/`
+  (year) => `https://powerliftingspain.es/campeonatos-${year >= 2023 ? 'ano-' : ''}${year}/`
 );
 
 function calculateProgressPercent(state) {

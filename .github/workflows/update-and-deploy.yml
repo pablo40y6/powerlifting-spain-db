@@ -2,8 +2,12 @@ name: Update data and deploy static site
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/update-and-deploy.yml'
   schedule:
-    - cron: '17 4 * * 1'
+    - cron: '17 4 * * MON'
 
 permissions:
   contents: read
@@ -35,6 +39,9 @@ jobs:
 
       - name: Build data index
         run: npm run build:index
+
+      - name: Audit data before publishing
+        run: npm run audit:index -- --strict
 
       - name: Build static site
         run: npm run build:web

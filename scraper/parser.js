@@ -570,15 +570,11 @@ function readUInt16Safe(buffer, offset) {
   return buffer.readUInt16LE(offset);
 }
 
-function fontIndexToArrayIndex(fontIndex, fonts) {
-  if (!fonts || fontIndex === null || fontIndex === undefined) return null;
-  const direct = Number(fontIndex);
-  if (fonts[direct]) return direct;
-
+function fontIndexToArrayIndex(fontIndex) {
+  if (fontIndex === null || fontIndex === undefined || fontIndex === 4) return null;
   // In BIFF, font index 4 is reserved, so XF font index >= 5 maps to
   // fonts array index - 1 when FONT records are stored sequentially.
-  if (direct > 4 && fonts[direct - 1]) return direct - 1;
-  return direct;
+  return fontIndex > 4 ? fontIndex - 1 : fontIndex;
 }
 
 function parseBiffFontRecord(data) {
@@ -599,7 +595,7 @@ function parseBiffFontRecord(data) {
 function parseBiffXfRecord(data, fonts) {
   if (!data || data.length < 2) return { failedAttemptStyle: false, fontIndex: null };
   const fontIndex = readUInt16Safe(data, 0);
-  const fontArrayIndex = fontIndexToArrayIndex(fontIndex, fonts);
+  const fontArrayIndex = fontIndexToArrayIndex(fontIndex);
   const font = fonts[fontArrayIndex] || null;
   return {
     fontIndex,
@@ -656,7 +652,7 @@ function buildLegacyXlsFailStyleMaps(buffer) {
     } else if (!inWorksheet && sid === 0x00e0) {
       xfs.push(parseBiffXfRecord(data, fonts));
     } else if (inWorksheet) {
-      if ([0x0203, 0x00fd, 0x0006, 0x0406, 0x027e, 0x0201, 0x0205].includes(sid) && data.length >= 6) {
+      if ([0x0203, 0x0204, 0x00fd, 0x0006, 0x0406, 0x027e, 0x0201, 0x0205].includes(sid) && data.length >= 6) {
         const row = data.readUInt16LE(0);
         const col = data.readUInt16LE(2);
         const xfIndex = data.readUInt16LE(4);
@@ -856,8 +852,9 @@ function cellStyleIndicatesFailedAttempt(cell, workbook) {
   return hasStrike || hasRed;
 }
 
-function attemptFromExcelCell(cell, workbook, failedByLegacyStyle = false) {
-  const attempt = attemptsFromValues([getCellValue(cell)])[0];
+function attemptFromExcelCell(cell, workbook, failedByLegacyStyle = false, isGoodlift = false) {
+  const value = getCellValue(cell);
+  const attempt = isGoodlift ? parseGoodliftAttempt(value) : attemptsFromValues([value])[0];
   if (!attempt || attempt.weight === null) return attempt;
 
   if (failedByLegacyStyle || cellStyleIndicatesFailedAttempt(cell, workbook)) {
@@ -872,14 +869,16 @@ function attemptFromExcelCell(cell, workbook, failedByLegacyStyle = false) {
 }
 
 function buildExcelLayoutFromHeaderRow(row) {
-  const lifterIndex = findHeaderIndex(row, (text) => /levantador|levantadora/.test(text));
+  const goodliftPlacingIndex = findHeaderIndex(row, (text) => text === 'rnk');
+  const isGoodlift = goodliftPlacingIndex >= 0 && row.some((cell) => normalizeName(cell) === 'd o b');
+  const lifterIndex = findHeaderIndex(row, (text) => isGoodlift ? text === 'name' : /levantador|levantadora/.test(text));
   if (lifterIndex < 0) return null;
 
-  const yearIndex = findHeaderIndex(row, (text) => /^ano$|^año$/.test(text));
-  const clubIndex = findHeaderIndex(row, (text) => /^club$/.test(text));
-  const bodyweightIndex = findHeaderIndex(row, (text) => /^peso$/.test(text));
-  const coefficientIndex = findHeaderIndex(row, (text) => /^coef|coeficiente/.test(text));
-  const orderIndex = findHeaderIndex(row, (text) => /^ord/.test(text));
+  const yearIndex = findHeaderIndex(row, (text) => isGoodlift ? text === 'd o b' : text === 'ano');
+  const clubIndex = findHeaderIndex(row, (text) => text === (isGoodlift ? 'team' : 'club'));
+  const bodyweightIndex = findHeaderIndex(row, (text) => text === (isGoodlift ? 'bwt' : 'peso'));
+  const coefficientIndex = findHeaderIndex(row, (text) => isGoodlift ? text === 'gl coef' : /^coef|coeficiente/.test(text));
+  const orderIndex = findHeaderIndex(row, (text) => isGoodlift ? text === 'lot' : /^ord/.test(text));
 
   const liftStarts = [];
   for (let index = 0; index < row.length; index += 1) {
@@ -911,7 +910,7 @@ function buildExcelLayoutFromHeaderRow(row) {
   let ipfglIndex = -1;
   for (let index = (totalIndex >= 0 ? totalIndex + 1 : lastAttemptColumn + 1); index < row.length; index += 1) {
     const text = normalizeName(row[index]).replace(/\s+/g, '');
-    if (/^ipfgl$/.test(text) || /^gl$/.test(text)) {
+    if (text === 'ipfgl' || text === 'gl' || (isGoodlift && text === 'glpts')) {
       ipfglIndex = index;
       break;
     }
@@ -927,7 +926,8 @@ function buildExcelLayoutFromHeaderRow(row) {
 
   return {
     lifterIndex,
-    placingIndex: lifterIndex > 0 ? lifterIndex - 1 : 0,
+    isGoodlift,
+    placingIndex: isGoodlift ? goodliftPlacingIndex : Math.max(0, lifterIndex - 1),
     yearIndex,
     clubIndex,
     bodyweightIndex,
@@ -994,7 +994,7 @@ function attemptsObjectFromExcelRow(row, layout, cells = [], workbook = null, le
       const cell = cells[item.start + offset] || null;
       if (cell) {
         const legacyFailed = Boolean(legacyFailMap && excelRowIndex !== null && legacyFailMap.has(`${excelRowIndex}:${item.start + offset}`));
-        movementAttempts.push(attemptFromExcelCell(cell, workbook, legacyFailed));
+        movementAttempts.push(attemptFromExcelCell(cell, workbook, legacyFailed, layout.isGoodlift));
       } else {
         movementAttempts.push(attemptsFromValues([row[item.start + offset]])[0]);
       }
@@ -1019,6 +1019,35 @@ function movementRanksFromExcelRow(row, layout) {
   return Object.keys(ranks).length ? ranks : null;
 }
 
+function goodliftBirthYear(value, competitionYear) {
+  const text = normalizeSpaces(value);
+  if (isReasonableBirthYearToken(text)) return Number(text);
+  const match = text.match(/^\d{1,2}\.\d{1,2}\.(\d{2}|\d{4})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  if (match[1].length === 4) return year;
+  if (!competitionYear) return null;
+  const fullYear = Math.floor(competitionYear / 100) * 100 + year;
+  return fullYear > competitionYear ? fullYear - 100 : fullYear;
+}
+
+function goodliftCompetitionDate(title) {
+  const match = String(title || '').match(/\b(\d{1,2})(?:[-–]\d{1,2})?\.(\d{1,2})\.((?:19|20)\d\d)\s*$/);
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return date.getUTCMonth() === Number(month) - 1 && date.getUTCDate() === Number(day) ? formatDateISO(date) : null;
+}
+
+function goodliftDocumentEvent(name) {
+  // GOODLIFT can export all three column groups even for single-lift events.
+  const title = normalizeName(name);
+  if (/\bpowerlifting\b/.test(title)) return 'powerlifting';
+  if (/\b(?:press banca|bench press)\b/.test(title)) return 'bench';
+  if (/\b(?:peso muerto|deadlift)\b/.test(title)) return 'deadlift';
+  return null;
+}
+
 function parseExcelDocument(buffer, baseMeta) {
   const { workbook, convertedLegacyXls } = readExcelWorkbookPreservingStyles(buffer);
   const legacyFailStyleMaps = convertedLegacyXls ? [] : buildLegacyXlsFailStyleMaps(buffer);
@@ -1036,7 +1065,7 @@ function parseExcelDocument(buffer, baseMeta) {
     const name = firstNonEmpty(rows[1] || []);
     const subtitle = firstNonEmpty(rows[2] || []);
     const locationDateText = firstNonEmpty(rows[3] || []);
-    const competition = buildCompetitionMeta(baseMeta, { name, subtitle, locationDateText });
+    let competition = buildCompetitionMeta(baseMeta, { name, subtitle, locationDateText });
 
     let category = null;
     let sex = null;
@@ -1047,12 +1076,19 @@ function parseExcelDocument(buffer, baseMeta) {
       const row = rowData.values || [];
       const cells = rowData.cells || [];
 
-      const rowSex = sexFromRow(row);
+      if (currentLayout?.isGoodlift && /^(team points|best (?:(?:women|men) )?lifters|abbreviations)\b/.test(normalizeName(firstNonEmpty(row)))) break;
+      const rowSex = sexFromRow(row) || (currentLayout?.isGoodlift && !row[currentLayout.lifterIndex]
+        ? sexFromText(firstNonEmpty(row)) : null);
       if (rowSex) sex = rowSex;
 
       const headerLayout = buildExcelLayoutFromHeaderRow(row);
       if (headerLayout) {
         currentLayout = headerLayout;
+        if (currentLayout.isGoodlift) {
+          competition = buildCompetitionMeta(baseMeta, { name, subtitle, date: goodliftCompetitionDate(name) });
+          sex = sex || sexFromText(`${baseMeta.resultsLabel || ''} ${baseMeta.resultsUrl || ''}`);
+          currentLayout.liftType = goodliftDocumentEvent(name) || currentLayout.liftType;
+        }
         continue;
       }
 
@@ -1070,11 +1106,12 @@ function parseExcelDocument(buffer, baseMeta) {
       if (!currentLayout) continue;
 
       const placingRaw = normalizeSpaces(row[currentLayout.placingIndex]);
-      const isDataRow = /^(\d+|DT|AI)$/i.test(placingRaw);
+      const isDataRow = currentLayout.isGoodlift ? /^(\d+|DT|DQ|DSQ|DR|TD|DD|AI|—)$/i.test(placingRaw) : /^(\d+|DT|AI)$/i.test(placingRaw);
       if (!isDataRow) continue;
 
       const lifterName = normalizeSpaces(row[currentLayout.lifterIndex]);
-      const parsedYearOfBirth = currentLayout.yearIndex >= 0 ? parseLocaleNumber(row[currentLayout.yearIndex]) : null;
+      const birthValue = row[currentLayout.yearIndex];
+      const parsedYearOfBirth = currentLayout.isGoodlift ? goodliftBirthYear(birthValue, competition.year) : parseLocaleNumber(birthValue);
       const yearOfBirth = parsedYearOfBirth && Number.isInteger(parsedYearOfBirth) ? parsedYearOfBirth : null;
       const club = currentLayout.clubIndex >= 0 ? normalizeSpaces(row[currentLayout.clubIndex]) : '';
       if (!lifterName || !club) continue;
@@ -1101,7 +1138,8 @@ function parseExcelDocument(buffer, baseMeta) {
         competition,
         sex,
         category,
-        placing: placingRaw,
+        placing: currentLayout.isGoodlift && placingRaw === '—' && /^[A-Z]{2,3}$/.test(normalizeSpaces(row[currentLayout.totalIndex]))
+          ? normalizeSpaces(row[currentLayout.totalIndex]) : placingRaw,
         lifterName,
         yearOfBirth,
         club,
@@ -1658,6 +1696,8 @@ function shouldRejectNonAthleteResult(entry) {
   const hasNoSignificantAttempts = !entryHasSignificantSportAttempt(entry);
   const athleteNameIsNotClearPerson = !athleteNameLooksLikeClearPerson(athleteName);
   const hasInsufficientRankableScore = hasNoScore || entry?.isRankable === false;
+
+  if (hasNoScore && hasNoBodyweight && hasLeadingTeamRankingToken(club) && athleteNameHasClubShape(athleteName)) return true;
 
   if (hasIncompleteNonRankableShape(entry, hasNoScore)) {
     return true;
@@ -2223,8 +2263,13 @@ function resolvePdfTotalIpfgl(tokens) {
   return { total, ipfgl, statsStartIndex: last - 1 };
 }
 
+function categoryAtStartOfPdfRow(tokens) {
+  if (/^\d+$/.test(tokens[0]) && !/^(\d+|DT|DQ|AI)$/i.test(tokens[1])) return null;
+  return formatCategoryToken(tokens[0]);
+}
+
 function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCategory, liftType = 'powerlifting') {
-  const rowCategory = formatCategoryToken(tokens[0]);
+  const rowCategory = categoryAtStartOfPdfRow(tokens);
 
   let nameStartIndex = 1;
   let placing = null;
@@ -2295,11 +2340,42 @@ function parsePdfAthleteLineWithoutYear(tokens, competition, sex, fallbackCatego
   });
 }
 
+function parsePdfOrdinalResult(line, competition, sex) {
+  // Older AEP sheets put the lot and ordinal placing before the name and club.
+  const match = line.match(/^(\d+) (\d+)[ºª] (.+?) ((?:19|20)\d{2}) ([\d.,]+) (?:SNR|SBJ|JUN|OPEN|M[1-4]) (\d{2,3}\+?) (.+)$/i);
+  if (!match) return null;
+  const [, order, placing, nameAndClub, year, weight, categoryToken, results] = match;
+  const fields = results.split(' ');
+  const athlete = splitPdfNameAndClubWithoutYear(nameAndClub.split(' '));
+  const category = formatCategoryToken(categoryToken);
+  const bodyweight = parseLocaleNumber(weight);
+  if (fields.length !== 11 || !athlete || !category || !bodyweightMatchesCategory(bodyweight, category)) return null;
+
+  return makeAthleteEntry({
+    ...athlete,
+    competition,
+    sex,
+    category,
+    placing,
+    yearOfBirth: Number(year),
+    bodyweight,
+    order: Number(order),
+    attempts: attemptsObjectFromList(fields.slice(0, 9)),
+    total: parseLocaleNumber(fields[9]),
+    ipfgl: parseLocaleNumber(fields[10]),
+    liftType: 'powerlifting',
+  });
+}
+
 function parsePdfAthleteLine(line, competition, sex, fallbackCategory, liftType = 'powerlifting') {
+  if (liftType === 'powerlifting') {
+    const ordinalResult = parsePdfOrdinalResult(line, competition, sex);
+    if (ordinalResult) return ordinalResult;
+  }
   const tokens = normalizeSpaces(line).split(' ');
   if (tokens.length < 12) return null;
 
-  const rowCategory = formatCategoryToken(tokens[0]);
+  const rowCategory = categoryAtStartOfPdfRow(tokens);
 
   let nameStartIndex = 1;
   let placing = null;
